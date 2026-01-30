@@ -162,8 +162,9 @@ button:
         - lambda: |-
             id(radar).reset_statistics();
 
-# Number inputs for adjusting thresholds at runtime (optional)
+# Number inputs for adjusting settings from Home Assistant
 number:
+  # Filter out slow-moving objects (pedestrians, cyclists)
   - platform: template
     name: "Min Speed Threshold"
     id: min_speed_input
@@ -179,6 +180,57 @@ number:
       then:
         - lambda: |-
             id(radar).set_min_speed_threshold(x);
+
+  # Filter out noise/errors above this speed
+  - platform: template
+    name: "Max Speed Threshold"
+    id: max_speed_input
+    unit_of_measurement: "km/h"
+    min_value: 50
+    max_value: 300
+    step: 10
+    initial_value: 200
+    optimistic: true
+    restore_value: true
+    icon: "mdi:speedometer"
+    on_value:
+      then:
+        - lambda: |-
+            id(radar).set_max_speed_threshold(x);
+
+  # Time gap (seconds) to consider readings as separate vehicles
+  - platform: template
+    name: "Vehicle Gap Time"
+    id: vehicle_gap_input
+    unit_of_measurement: "s"
+    min_value: 1
+    max_value: 30
+    step: 1
+    initial_value: 3
+    optimistic: true
+    restore_value: true
+    icon: "mdi:timer-outline"
+    on_value:
+      then:
+        - lambda: |-
+            id(radar).set_vehicle_gap_ms((uint32_t)(x * 1000));
+
+  # How long to keep "vehicle detected" on after last reading
+  - platform: template
+    name: "Detection Timeout"
+    id: detection_timeout_input
+    unit_of_measurement: "s"
+    min_value: 1
+    max_value: 10
+    step: 0.5
+    initial_value: 2
+    optimistic: true
+    restore_value: true
+    icon: "mdi:timer-off-outline"
+    on_value:
+      then:
+        - lambda: |-
+            id(radar).set_detection_timeout_ms((uint32_t)(x * 1000));
 
 # Time for midnight reset
 time:

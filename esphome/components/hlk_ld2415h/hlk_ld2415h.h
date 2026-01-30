@@ -28,9 +28,17 @@ class HLKLD2415HComponent : public Component, public uart::UARTDevice {
   void set_average_speed_sensor(sensor::Sensor *sensor) { this->average_speed_sensor_ = sensor; }
   void set_max_speed_sensor(sensor::Sensor *sensor) { this->max_speed_sensor_ = sensor; }
 
-  // Configuration setters
+  // Configuration setters (can be called from HA at runtime)
   void set_min_speed_threshold(float threshold) { this->min_speed_threshold_ = threshold; }
   void set_max_speed_threshold(float threshold) { this->max_speed_threshold_ = threshold; }
+  void set_vehicle_gap_ms(uint32_t gap_ms) { this->vehicle_gap_ms_ = gap_ms; }
+  void set_detection_timeout_ms(uint32_t timeout_ms) { this->detection_timeout_ms_ = timeout_ms; }
+
+  // Getters for current config values
+  float get_min_speed_threshold() const { return this->min_speed_threshold_; }
+  float get_max_speed_threshold() const { return this->max_speed_threshold_; }
+  uint32_t get_vehicle_gap_ms() const { return this->vehicle_gap_ms_; }
+  uint32_t get_detection_timeout_ms() const { return this->detection_timeout_ms_; }
 
   // Public methods
   void reset_statistics();
@@ -67,13 +75,11 @@ class HLKLD2415HComponent : public Component, public uart::UARTDevice {
   float speed_sum_{0};
   float max_speed_{0};
 
-  // Configuration
-  float min_speed_threshold_{10.0};  // Default: ignore speeds below 10 km/h (filters pedestrians)
-  float max_speed_threshold_{250.0}; // Default: ignore speeds above 250 km/h (filters noise)
-
-  // Constants
-  static const uint32_t DETECTION_TIMEOUT_MS = 2000;  // Clear detection after 2 seconds of no data
-  static const uint32_t VEHICLE_GAP_MS = 3000;        // Minimum gap between vehicles to count as separate
+  // Configuration (all adjustable from Home Assistant at runtime)
+  float min_speed_threshold_{10.0};     // Ignore speeds below this (filters pedestrians)
+  float max_speed_threshold_{250.0};    // Ignore speeds above this (filters noise)
+  uint32_t detection_timeout_ms_{2000}; // Clear detection after this many ms of no data
+  uint32_t vehicle_gap_ms_{3000};       // Minimum gap (ms) between readings to count as new vehicle
 };
 
 }  // namespace hlk_ld2415h

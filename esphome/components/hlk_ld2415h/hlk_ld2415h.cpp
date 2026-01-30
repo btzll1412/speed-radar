@@ -15,6 +15,8 @@ void HLKLD2415HComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "HLK-LD2415H:");
   ESP_LOGCONFIG(TAG, "  Min Speed Threshold: %.1f km/h", this->min_speed_threshold_);
   ESP_LOGCONFIG(TAG, "  Max Speed Threshold: %.1f km/h", this->max_speed_threshold_);
+  ESP_LOGCONFIG(TAG, "  Detection Timeout: %u ms", this->detection_timeout_ms_);
+  ESP_LOGCONFIG(TAG, "  Vehicle Gap: %u ms", this->vehicle_gap_ms_);
   LOG_SENSOR("  ", "Speed", this->speed_sensor_);
   LOG_TEXT_SENSOR("  ", "Direction", this->direction_text_sensor_);
   LOG_BINARY_SENSOR("  ", "Vehicle Detected", this->vehicle_detected_binary_sensor_);
@@ -43,9 +45,9 @@ void HLKLD2415HComponent::loop() {
     }
   }
 
-  // Clear detection state if no data received for DETECTION_TIMEOUT_MS
+  // Clear detection state if no data received for detection_timeout_ms_
   if (this->last_detection_time_ > 0 &&
-      millis() - this->last_detection_time_ > DETECTION_TIMEOUT_MS) {
+      millis() - this->last_detection_time_ > this->detection_timeout_ms_) {
     this->clear_detection_();
   }
 }
@@ -113,7 +115,7 @@ void HLKLD2415HComponent::process_speed_(float speed, bool approaching) {
 
   // Check if this is a new vehicle (gap since last detection)
   bool is_new_vehicle = (this->last_vehicle_time_ == 0 ||
-                         now - this->last_vehicle_time_ > VEHICLE_GAP_MS ||
+                         now - this->last_vehicle_time_ > this->vehicle_gap_ms_ ||
                          approaching != this->last_approaching_);
 
   this->last_detection_time_ = now;
