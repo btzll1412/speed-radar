@@ -45,23 +45,50 @@ uart:
   baud_rate: 9600
 
 # HLK-LD2415H radar component
+# min_speed_threshold filters out pedestrians and cyclists:
+#   - Walking: 3-6 km/h
+#   - Jogging: 8-12 km/h
+#   - Cycling: 15-25 km/h
+# Set to 15 km/h to only detect motor vehicles
 hlk_ld2415h:
   id: radar
   uart_id: radar_uart
+  min_speed_threshold: 15.0  # Ignore speeds below 15 km/h (filters pedestrians/cyclists)
+  max_speed_threshold: 200.0 # Ignore speeds above 200 km/h (filters noise/errors)
 
-# Sensors
+# Sensors from the radar component
 sensor:
+  # Current speed reading
   - platform: hlk_ld2415h
     speed:
       name: "Vehicle Speed"
       id: vehicle_speed
-      unit_of_measurement: "km/h"
-      accuracy_decimals: 1
-      icon: "mdi:speedometer"
       filters:
         - filter_out: 0
 
-  # Speed in mph (converted)
+    # Vehicle counts (tracked in C++ component)
+    vehicle_count:
+      name: "Vehicle Count"
+      id: vehicle_count
+
+    approaching_count:
+      name: "Approaching Count"
+      id: approaching_count
+
+    leaving_count:
+      name: "Leaving Count"
+      id: leaving_count
+
+    # Speed statistics (calculated in C++ component)
+    average_speed:
+      name: "Average Speed"
+      id: average_speed
+
+    max_speed:
+      name: "Max Speed"
+      id: max_speed
+
+  # Speed in mph (converted from km/h)
   - platform: template
     name: "Vehicle Speed MPH"
     id: vehicle_speed_mph
@@ -75,29 +102,37 @@ sensor:
       return 0;
     update_interval: 500ms
 
-  # Max speed today (resets at midnight)
+  # Average speed in mph
   - platform: template
-    name: "Max Speed Today"
-    id: max_speed_today
-    unit_of_measurement: "km/h"
+    name: "Average Speed MPH"
+    id: average_speed_mph
+    unit_of_measurement: "mph"
     accuracy_decimals: 1
     icon: "mdi:speedometer-medium"
+    lambda: |-
+      if (id(average_speed).state > 0) {
+        return id(average_speed).state * 0.621371;
+      }
+      return 0;
+    update_interval: 5s
 
-  # Detection counter
+  # Max speed in mph
   - platform: template
-    name: "Detection Count"
-    id: detection_count
-    icon: "mdi:counter"
-    accuracy_decimals: 0
+    name: "Max Speed MPH"
+    id: max_speed_mph
+    unit_of_measurement: "mph"
+    accuracy_decimals: 1
+    icon: "mdi:speedometer"
+    lambda: |-
+      if (id(max_speed).state > 0) {
+        return id(max_speed).state * 0.621371;
+      }
+      return 0;
+    update_interval: 5s
 
   # Uptime sensor
   - platform: uptime
     name: "Uptime"
-
-  # WiFi signal (if using WiFi fallback)
-  - platform: wifi_signal
-    name: "WiFi Signal"
-    update_interval: 60s
 
 # Text sensors
 text_sensor:
@@ -105,7 +140,6 @@ text_sensor:
     direction:
       name: "Direction"
       id: vehicle_direction
-      icon: "mdi:arrow-left-right"
 
 # Binary sensors
 binary_sensor:
@@ -114,18 +148,6 @@ binary_sensor:
       name: "Vehicle Detected"
       id: vehicle_detected
       device_class: motion
-      on_press:
-        then:
-          # Increment detection counter
-          - lambda: |-
-              id(detection_count).publish_state(id(detection_count).state + 1);
-          # Update max speed if current speed is higher
-          - lambda: |-
-              float current = id(vehicle_speed).state;
-              float max = id(max_speed_today).state;
-              if (current > max || isnan(max)) {
-                id(max_speed_today).publish_state(current);
-              }
 
 # Buttons
 button:
@@ -133,28 +155,40 @@ button:
     name: "Restart"
 
   - platform: template
-    name: "Reset Daily Stats"
+    name: "Reset Statistics"
     icon: "mdi:refresh"
     on_press:
       then:
         - lambda: |-
-            id(max_speed_today).publish_state(0);
-            id(detection_count).publish_state(0);
+            id(radar).reset_statistics();
+
+# Number inputs for adjusting thresholds at runtime (optional)
+number:
+  - platform: template
+    name: "Min Speed Threshold"
+    id: min_speed_input
+    unit_of_measurement: "km/h"
+    min_value: 0
+    max_value: 50
+    step: 1
+    initial_value: 15
+    optimistic: true
+    restore_value: true
+    icon: "mdi:speedometer-slow"
+    on_value:
+      then:
+        - lambda: |-
+            id(radar).set_min_speed_threshold(x);
 
 # Time for midnight reset
 time:
   - platform: homeassistant
     id: homeassistant_time
     on_time:
-      # Reset daily stats at midnight
+      # Reset statistics at midnight
       - seconds: 0
         minutes: 0
         hours: 0
         then:
           - lambda: |-
-              id(max_speed_today).publish_state(0);
-              id(detection_count).publish_state(0);
-
-# Status LED (if available on your board)
-# status_led:
-#   pin: GPIO2
+              id(radar).reset_statistics();

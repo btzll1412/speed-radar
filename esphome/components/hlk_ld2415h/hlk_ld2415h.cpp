@@ -13,9 +13,16 @@ void HLKLD2415HComponent::setup() {
 
 void HLKLD2415HComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "HLK-LD2415H:");
+  ESP_LOGCONFIG(TAG, "  Min Speed Threshold: %.1f km/h", this->min_speed_threshold_);
+  ESP_LOGCONFIG(TAG, "  Max Speed Threshold: %.1f km/h", this->max_speed_threshold_);
   LOG_SENSOR("  ", "Speed", this->speed_sensor_);
   LOG_TEXT_SENSOR("  ", "Direction", this->direction_text_sensor_);
   LOG_BINARY_SENSOR("  ", "Vehicle Detected", this->vehicle_detected_binary_sensor_);
+  LOG_SENSOR("  ", "Vehicle Count", this->vehicle_count_sensor_);
+  LOG_SENSOR("  ", "Approaching Count", this->approaching_count_sensor_);
+  LOG_SENSOR("  ", "Leaving Count", this->leaving_count_sensor_);
+  LOG_SENSOR("  ", "Average Speed", this->average_speed_sensor_);
+  LOG_SENSOR("  ", "Max Speed", this->max_speed_sensor_);
 }
 
 void HLKLD2415HComponent::loop() {
@@ -83,19 +90,35 @@ void HLKLD2415HComponent::parse_data_() {
     return;
   }
 
-  // Validate speed range (1-240 km/h for HLK-LD2415H)
-  if (speed < 0 || speed > 250) {
-    ESP_LOGW(TAG, "Speed out of range: %.1f", speed);
+  // Apply speed thresholds to filter pedestrians and noise
+  if (speed < this->min_speed_threshold_) {
+    ESP_LOGV(TAG, "Speed %.1f km/h below threshold (%.1f), ignoring (likely pedestrian)",
+             speed, this->min_speed_threshold_);
     return;
   }
 
-  ESP_LOGD(TAG, "Speed: %.1f km/h, Direction: %s", speed, approaching ? "approaching" : "leaving");
+  if (speed > this->max_speed_threshold_) {
+    ESP_LOGW(TAG, "Speed %.1f km/h above max threshold (%.1f), ignoring (likely noise)",
+             speed, this->max_speed_threshold_);
+    return;
+  }
+
+  ESP_LOGD(TAG, "Vehicle speed: %.1f km/h, Direction: %s", speed, approaching ? "approaching" : "leaving");
 
   this->process_speed_(speed, approaching);
 }
 
 void HLKLD2415HComponent::process_speed_(float speed, bool approaching) {
-  this->last_detection_time_ = millis();
+  uint32_t now = millis();
+
+  // Check if this is a new vehicle (gap since last detection)
+  bool is_new_vehicle = (this->last_vehicle_time_ == 0 ||
+                         now - this->last_vehicle_time_ > VEHICLE_GAP_MS ||
+                         approaching != this->last_approaching_);
+
+  this->last_detection_time_ = now;
+  this->last_speed_ = speed;
+  this->last_approaching_ = approaching;
 
   // Update speed sensor
   if (this->speed_sensor_ != nullptr) {
@@ -111,6 +134,67 @@ void HLKLD2415HComponent::process_speed_(float speed, bool approaching) {
   if (this->vehicle_detected_binary_sensor_ != nullptr) {
     this->vehicle_detected_binary_sensor_->publish_state(true);
   }
+
+  // Update statistics if this is a new vehicle
+  if (is_new_vehicle) {
+    this->update_statistics_(speed, approaching);
+    this->last_vehicle_time_ = now;
+  } else {
+    // Update max speed for current vehicle if higher
+    if (speed > this->last_speed_) {
+      // Update max if this reading is higher than previous max
+      if (speed > this->max_speed_) {
+        this->max_speed_ = speed;
+        if (this->max_speed_sensor_ != nullptr) {
+          this->max_speed_sensor_->publish_state(this->max_speed_);
+        }
+      }
+    }
+  }
+}
+
+void HLKLD2415HComponent::update_statistics_(float speed, bool approaching) {
+  // Increment counts
+  this->vehicle_count_++;
+  if (approaching) {
+    this->approaching_count_++;
+  } else {
+    this->leaving_count_++;
+  }
+
+  // Update speed sum for average calculation
+  this->speed_sum_ += speed;
+
+  // Update max speed
+  if (speed > this->max_speed_) {
+    this->max_speed_ = speed;
+  }
+
+  // Publish statistics
+  if (this->vehicle_count_sensor_ != nullptr) {
+    this->vehicle_count_sensor_->publish_state(this->vehicle_count_);
+  }
+
+  if (this->approaching_count_sensor_ != nullptr) {
+    this->approaching_count_sensor_->publish_state(this->approaching_count_);
+  }
+
+  if (this->leaving_count_sensor_ != nullptr) {
+    this->leaving_count_sensor_->publish_state(this->leaving_count_);
+  }
+
+  if (this->average_speed_sensor_ != nullptr && this->vehicle_count_ > 0) {
+    float avg = this->speed_sum_ / this->vehicle_count_;
+    this->average_speed_sensor_->publish_state(avg);
+  }
+
+  if (this->max_speed_sensor_ != nullptr) {
+    this->max_speed_sensor_->publish_state(this->max_speed_);
+  }
+
+  ESP_LOGI(TAG, "New vehicle #%d: %.1f km/h %s (avg: %.1f, max: %.1f)",
+           this->vehicle_count_, speed, approaching ? "approaching" : "leaving",
+           this->speed_sum_ / this->vehicle_count_, this->max_speed_);
 }
 
 void HLKLD2415HComponent::clear_detection_() {
@@ -124,6 +208,34 @@ void HLKLD2415HComponent::clear_detection_() {
   // Clear vehicle detected
   if (this->vehicle_detected_binary_sensor_ != nullptr) {
     this->vehicle_detected_binary_sensor_->publish_state(false);
+  }
+}
+
+void HLKLD2415HComponent::reset_statistics() {
+  ESP_LOGI(TAG, "Resetting statistics");
+
+  this->vehicle_count_ = 0;
+  this->approaching_count_ = 0;
+  this->leaving_count_ = 0;
+  this->speed_sum_ = 0;
+  this->max_speed_ = 0;
+  this->last_vehicle_time_ = 0;
+
+  // Publish reset values
+  if (this->vehicle_count_sensor_ != nullptr) {
+    this->vehicle_count_sensor_->publish_state(0);
+  }
+  if (this->approaching_count_sensor_ != nullptr) {
+    this->approaching_count_sensor_->publish_state(0);
+  }
+  if (this->leaving_count_sensor_ != nullptr) {
+    this->leaving_count_sensor_->publish_state(0);
+  }
+  if (this->average_speed_sensor_ != nullptr) {
+    this->average_speed_sensor_->publish_state(0);
+  }
+  if (this->max_speed_sensor_ != nullptr) {
+    this->max_speed_sensor_->publish_state(0);
   }
 }
 
