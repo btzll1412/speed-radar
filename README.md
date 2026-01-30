@@ -73,11 +73,255 @@ Radar → ESP32:
 
 ## Installation
 
+### Prerequisites
+
+- ESPHome installed (via Home Assistant add-on or standalone)
+- Home Assistant with ESPHome integration
+- USB-to-Serial adapter (for initial flash only)
+- PoE-capable network switch or injector
+
+### Step 1: Prepare Files
+
 1. Copy `esphome/speed-radar.yaml` to your ESPHome config directory
 2. Copy `esphome/components/hlk_ld2415h/` folder to your ESPHome components directory
-3. Create `secrets.yaml` from `secrets.yaml.example`
-4. Flash to your WT32-ETH02
-5. Add to Home Assistant
+3. Create `secrets.yaml` with your credentials:
+
+```yaml
+# secrets.yaml
+api_encryption_key: "your-32-character-base64-key-here"
+ota_password: "your-ota-password"
+```
+
+Generate an API key with: `openssl rand -base64 32`
+
+### Step 2: Assemble Hardware
+
+1. **Mount PoE Splitter** in enclosure
+   - Connect PoE input from Ethernet cable
+   - 12V output goes to radar and buck converter
+
+2. **Wire Buck Converter**
+   - Input: 12V from PoE splitter
+   - Output: 5V to WT32-ETH02 VIN
+
+3. **Connect Radar to ESP32**
+   ```
+   HLK-LD2415H    →    WT32-ETH02
+   ─────────────────────────────
+   VCC (9-24V)    →    12V from PoE splitter
+   GND            →    GND (common ground)
+   TX             →    GPIO5 (RX)
+   RX             →    GPIO17 (TX)
+   ```
+
+4. **Verify all ground connections are common**
+
+### Step 3: Initial Flash
+
+1. Connect WT32-ETH02 to computer via USB-to-Serial adapter:
+   ```
+   USB-Serial    →    WT32-ETH02
+   ───────────────────────────
+   TX            →    RX (GPIO3)
+   RX            →    TX (GPIO1)
+   GND           →    GND
+   3.3V          →    3.3V (or use external 5V to VIN)
+   ```
+
+2. Put ESP32 in flash mode:
+   - Hold BOOT button
+   - Press and release EN button
+   - Release BOOT button
+
+3. Flash using ESPHome:
+   ```bash
+   esphome run speed-radar.yaml
+   ```
+
+4. Select the serial port when prompted
+
+### Step 4: Deploy & Connect
+
+1. Disconnect USB adapter
+2. Connect Ethernet cable from PoE switch to WT32-ETH02
+3. Device will boot and connect to your network
+4. Check your router/DHCP for the device IP
+
+### Step 5: Add to Home Assistant
+
+1. Go to **Settings → Devices & Services**
+2. ESPHome should auto-discover "Speed Radar"
+3. Click **Configure** and enter your API encryption key
+4. All entities will appear automatically
+
+## Usage Guide
+
+### Initial Configuration
+
+After adding to Home Assistant, configure these settings:
+
+1. **Set Your Speed Limit**
+   - Go to `number.speed_radar_speed_limit`
+   - Set your street's posted speed limit (e.g., 50 km/h)
+
+2. **Adjust Pedestrian Filter**
+   - Go to `number.speed_radar_min_speed_threshold`
+   - Default 15 km/h filters out pedestrians and joggers
+   - Lower to 10 km/h to capture fast cyclists
+   - Raise to 20 km/h for vehicle-only detection
+
+3. **Set Direction Filter** (optional)
+   - Go to `select.speed_radar_direction_filter`
+   - "Both" - detect traffic in both directions
+   - "Approaching Only" - only inbound traffic
+   - "Leaving Only" - only outbound traffic
+
+### Calibration
+
+#### Angle Compensation
+
+If your radar isn't mounted perpendicular to the road:
+
+1. Have a friend drive past at a known speed (use their speedometer)
+2. Note the speed displayed by the radar
+3. Calculate the mounting angle using the formula:
+   ```
+   angle = arccos(displayed_speed / actual_speed)
+   ```
+4. Set `number.speed_radar_angle_compensation` to this angle
+
+**Example:** If actual speed is 50 km/h but radar shows 43 km/h:
+- cos(angle) = 43/50 = 0.86
+- angle ≈ 30°
+
+#### Speed Offset
+
+For fine-tuning after angle compensation:
+
+1. Compare radar readings to a known reference (GPS speedometer)
+2. If radar reads 2 km/h low, set `number.speed_radar_speed_offset` to +2
+3. If radar reads 3 km/h high, set offset to -3
+
+### Understanding the Data
+
+#### Real-Time Sensors
+
+| Sensor | What It Tells You |
+|--------|-------------------|
+| Vehicle Speed | Current speed of detected vehicle |
+| Direction | Whether vehicle is approaching or leaving |
+| Vehicle Detected | Binary on/off for motion detection |
+
+#### Daily Statistics (reset at midnight)
+
+| Sensor | What It Tells You |
+|--------|-------------------|
+| Vehicle Count | Total vehicles detected today |
+| Average Speed | Mean speed of all vehicles |
+| Max Speed | Fastest vehicle today |
+| Speeder Count | Vehicles exceeding speed limit |
+| Violation % | Percentage of speeders |
+| Worst Speeder | Highest amount OVER the limit |
+
+#### Traffic Engineering
+
+| Sensor | What It Tells You |
+|--------|-------------------|
+| 85th Percentile | Speed 85% of vehicles stay under |
+| Peak Hour | Busiest hour (0-23) |
+| Peak Hour Count | Vehicles during peak hour |
+
+### Creating Dashboards
+
+Example Lovelace card for your dashboard:
+
+```yaml
+type: entities
+title: Street Speed Monitor
+entities:
+  - entity: sensor.speed_radar_vehicle_speed
+    name: Current Speed
+  - entity: text_sensor.speed_radar_direction
+    name: Direction
+  - entity: sensor.speed_radar_vehicle_count
+    name: Vehicles Today
+  - entity: sensor.speed_radar_average_speed
+    name: Average Speed
+  - entity: sensor.speed_radar_speeder_count
+    name: Speeders Today
+  - entity: sensor.speed_radar_violation_percentage
+    name: Violation Rate
+  - entity: sensor.speed_radar_percentile_85_speed
+    name: 85th Percentile
+```
+
+### Useful Automations
+
+#### Flash Light for Speeders
+
+```yaml
+automation:
+  - alias: "Flash warning light for speeders"
+    trigger:
+      - platform: numeric_state
+        entity_id: sensor.speed_radar_vehicle_speed
+        above: 55  # 5 over limit
+    action:
+      - service: light.turn_on
+        target:
+          entity_id: light.warning_flasher
+        data:
+          flash: short
+```
+
+#### Daily Summary Notification
+
+```yaml
+automation:
+  - alias: "Daily traffic summary"
+    trigger:
+      - platform: time
+        at: "23:55:00"
+    action:
+      - service: notify.mobile_app
+        data:
+          title: "Daily Traffic Report"
+          message: >
+            Vehicles: {{ states('sensor.speed_radar_vehicle_count') }}
+            Average: {{ states('sensor.speed_radar_average_speed') }} km/h
+            Speeders: {{ states('sensor.speed_radar_speeder_count') }}
+            ({{ states('sensor.speed_radar_violation_percentage') }}%)
+            Peak hour: {{ states('sensor.speed_radar_peak_hour') }}:00
+```
+
+### Maintenance
+
+- **Statistics reset automatically at midnight**
+- Use **Reset Statistics** button to manually reset counters
+- **OTA updates**: Flash new firmware over Ethernet (no USB needed)
+- Check **Uptime** sensor to verify device stability
+
+### Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| No detections | Check UART wiring (TX↔RX crossed correctly) |
+| Erratic readings | Increase min_speed_threshold, check for reflections |
+| Speed too low | Adjust angle_compensation for mounting angle |
+| Speed too high | Lower angle_compensation or add negative offset |
+| Counts too high | Increase vehicle_gap_time to separate vehicles |
+| Device offline | Check PoE power, Ethernet connection |
+
+### OTA Updates
+
+After initial USB flash, update over the network:
+
+```bash
+esphome run speed-radar.yaml
+# Select the network option when prompted
+```
+
+Or use Home Assistant's ESPHome dashboard for one-click updates
 
 ## Home Assistant Entities
 
