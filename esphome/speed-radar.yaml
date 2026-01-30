@@ -45,48 +45,82 @@ uart:
   baud_rate: 9600
 
 # HLK-LD2415H radar component
-# min_speed_threshold filters out pedestrians and cyclists:
-#   - Walking: 3-6 km/h
-#   - Jogging: 8-12 km/h
-#   - Cycling: 15-25 km/h
-# Set to 15 km/h to only detect motor vehicles
 hlk_ld2415h:
   id: radar
   uart_id: radar_uart
-  min_speed_threshold: 15.0  # Ignore speeds below 15 km/h (filters pedestrians/cyclists)
-  max_speed_threshold: 200.0 # Ignore speeds above 200 km/h (filters noise/errors)
+  min_speed_threshold: 15.0   # Ignore speeds below 15 km/h (filters pedestrians)
+  max_speed_threshold: 200.0  # Ignore speeds above 200 km/h (filters noise)
+  speed_limit: 50.0           # Your street's speed limit
+  direction_filter: both      # Options: both, approaching, leaving
+  angle_compensation: 0.0     # Mounting angle in degrees (0-60)
+  speed_offset: 0.0           # Fine-tune offset in km/h (-20 to +20)
 
 # Sensors from the radar component
 sensor:
-  # Current speed reading
   - platform: hlk_ld2415h
+    # Current speed
     speed:
       name: "Vehicle Speed"
       id: vehicle_speed
       filters:
         - filter_out: 0
 
-    # Vehicle counts (tracked in C++ component)
+    # Basic counts
     vehicle_count:
       name: "Vehicle Count"
       id: vehicle_count
-
     approaching_count:
       name: "Approaching Count"
       id: approaching_count
-
     leaving_count:
       name: "Leaving Count"
       id: leaving_count
 
-    # Speed statistics (calculated in C++ component)
+    # Speed statistics
     average_speed:
       name: "Average Speed"
       id: average_speed
-
     max_speed:
       name: "Max Speed"
       id: max_speed
+
+    # Speed limit violations
+    speeder_count:
+      name: "Speeder Count"
+      id: speeder_count
+    violation_percentage:
+      name: "Violation Percentage"
+      id: violation_percentage
+    worst_speeder:
+      name: "Worst Speeder Over Limit"
+      id: worst_speeder
+
+    # Direction-specific averages
+    avg_speed_approaching:
+      name: "Avg Speed Approaching"
+      id: avg_speed_approaching
+    avg_speed_leaving:
+      name: "Avg Speed Leaving"
+      id: avg_speed_leaving
+
+    # Hourly statistics
+    current_hour_count:
+      name: "Current Hour Count"
+      id: current_hour_count
+    current_hour_avg_speed:
+      name: "Current Hour Avg Speed"
+      id: current_hour_avg_speed
+    peak_hour:
+      name: "Peak Hour"
+      id: peak_hour
+    peak_hour_count:
+      name: "Peak Hour Count"
+      id: peak_hour_count
+
+    # 85th percentile (traffic engineering metric)
+    percentile_85_speed:
+      name: "85th Percentile Speed"
+      id: percentile_85_speed
 
   # Speed in mph (converted from km/h)
   - platform: template
@@ -112,20 +146,6 @@ sensor:
     lambda: |-
       if (id(average_speed).state > 0) {
         return id(average_speed).state * 0.621371;
-      }
-      return 0;
-    update_interval: 5s
-
-  # Max speed in mph
-  - platform: template
-    name: "Max Speed MPH"
-    id: max_speed_mph
-    unit_of_measurement: "mph"
-    accuracy_decimals: 1
-    icon: "mdi:speedometer"
-    lambda: |-
-      if (id(max_speed).state > 0) {
-        return id(max_speed).state * 0.621371;
       }
       return 0;
     update_interval: 5s
@@ -164,6 +184,23 @@ button:
 
 # Number inputs for adjusting settings from Home Assistant
 number:
+  # Speed limit for violation tracking
+  - platform: template
+    name: "Speed Limit"
+    id: speed_limit_input
+    unit_of_measurement: "km/h"
+    min_value: 10
+    max_value: 120
+    step: 5
+    initial_value: 50
+    optimistic: true
+    restore_value: true
+    icon: "mdi:sign-caution"
+    on_value:
+      then:
+        - lambda: |-
+            id(radar).set_speed_limit(x);
+
   # Filter out slow-moving objects (pedestrians, cyclists)
   - platform: template
     name: "Min Speed Threshold"
@@ -232,7 +269,62 @@ number:
         - lambda: |-
             id(radar).set_detection_timeout_ms((uint32_t)(x * 1000));
 
-# Time for midnight reset
+  # Angle compensation for mounting angle
+  - platform: template
+    name: "Angle Compensation"
+    id: angle_compensation_input
+    unit_of_measurement: "deg"
+    min_value: 0
+    max_value: 60
+    step: 5
+    initial_value: 0
+    optimistic: true
+    restore_value: true
+    icon: "mdi:angle-acute"
+    on_value:
+      then:
+        - lambda: |-
+            id(radar).set_angle_compensation(x);
+
+  # Speed offset for calibration
+  - platform: template
+    name: "Speed Offset"
+    id: speed_offset_input
+    unit_of_measurement: "km/h"
+    min_value: -20
+    max_value: 20
+    step: 1
+    initial_value: 0
+    optimistic: true
+    restore_value: true
+    icon: "mdi:tune"
+    on_value:
+      then:
+        - lambda: |-
+            id(radar).set_speed_offset(x);
+
+# Select for direction filter
+select:
+  - platform: template
+    name: "Direction Filter"
+    id: direction_filter_select
+    options:
+      - "Both"
+      - "Approaching Only"
+      - "Leaving Only"
+    initial_option: "Both"
+    optimistic: true
+    restore_value: true
+    icon: "mdi:arrow-left-right"
+    on_value:
+      then:
+        - lambda: |-
+            uint8_t filter = 0;
+            if (x == "Approaching Only") filter = 1;
+            else if (x == "Leaving Only") filter = 2;
+            id(radar).set_direction_filter(filter);
+
+# Time for hourly updates and midnight reset
 time:
   - platform: homeassistant
     id: homeassistant_time
@@ -244,3 +336,20 @@ time:
         then:
           - lambda: |-
               id(radar).reset_statistics();
+    on_time_sync:
+      then:
+        - lambda: |-
+            auto time = id(homeassistant_time).now();
+            if (time.is_valid()) {
+              id(radar).set_current_hour(time.hour);
+            }
+
+# Update current hour every minute
+interval:
+  - interval: 1min
+    then:
+      - lambda: |-
+          auto time = id(homeassistant_time).now();
+          if (time.is_valid()) {
+            id(radar).set_current_hour(time.hour);
+          }
