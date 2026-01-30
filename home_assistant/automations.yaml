@@ -1,0 +1,111 @@
+# Example Home Assistant automations for the Speed Radar
+# Copy these to your automations.yaml or use the UI to create similar ones
+
+# Flash a warning light when someone exceeds the speed limit
+- id: speed_radar_speeder_alert
+  alias: "Speed Radar - Speeder Alert"
+  description: "Flash a warning light when a vehicle exceeds the speed limit"
+  trigger:
+    - platform: numeric_state
+      entity_id: sensor.speed_radar_vehicle_speed
+      above: 40  # Set your speed limit here (km/h)
+  condition:
+    - condition: state
+      entity_id: binary_sensor.speed_radar_vehicle_detected
+      state: "on"
+  action:
+    - service: light.turn_on
+      target:
+        entity_id: light.warning_light  # Replace with your light
+      data:
+        flash: short
+    - delay:
+        seconds: 3
+    - service: light.turn_off
+      target:
+        entity_id: light.warning_light
+
+# Send notification for excessive speed
+- id: speed_radar_excessive_speed_notification
+  alias: "Speed Radar - Excessive Speed Notification"
+  description: "Send a mobile notification when someone is driving dangerously fast"
+  trigger:
+    - platform: numeric_state
+      entity_id: sensor.speed_radar_vehicle_speed
+      above: 60  # Excessive speed threshold (km/h)
+  action:
+    - service: notify.mobile_app_your_phone  # Replace with your notify service
+      data:
+        title: "Speed Alert!"
+        message: >-
+          Vehicle detected going {{ states('sensor.speed_radar_vehicle_speed') }} km/h
+          ({{ states('text_sensor.speed_radar_direction') }})
+        data:
+          tag: speed_alert
+          priority: high
+
+# Log all vehicle detections to a file
+- id: speed_radar_log_detection
+  alias: "Speed Radar - Log Detection"
+  description: "Log every vehicle detection with timestamp"
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.speed_radar_vehicle_detected
+      to: "on"
+  action:
+    - service: notify.file_notify  # Requires file notify integration
+      data:
+        message: >-
+          {{ now().strftime('%Y-%m-%d %H:%M:%S') }},{{ states('sensor.speed_radar_vehicle_speed') }},{{ states('text_sensor.speed_radar_direction') }}
+
+# Daily summary notification
+- id: speed_radar_daily_summary
+  alias: "Speed Radar - Daily Summary"
+  description: "Send a daily summary at 9 PM"
+  trigger:
+    - platform: time
+      at: "21:00:00"
+  action:
+    - service: notify.mobile_app_your_phone  # Replace with your notify service
+      data:
+        title: "Daily Speed Radar Summary"
+        message: >-
+          Today's stats:
+          - Vehicles detected: {{ states('sensor.speed_radar_detection_count') }}
+          - Max speed: {{ states('sensor.speed_radar_max_speed_today') }} km/h
+
+# Record security camera when speeder detected
+- id: speed_radar_trigger_camera
+  alias: "Speed Radar - Trigger Camera Recording"
+  description: "Start recording on security camera when speeder detected"
+  trigger:
+    - platform: numeric_state
+      entity_id: sensor.speed_radar_vehicle_speed
+      above: 50  # Speed threshold
+  action:
+    - service: camera.record
+      target:
+        entity_id: camera.front_street  # Replace with your camera
+      data:
+        filename: "/media/speed_violations/{{ now().strftime('%Y%m%d_%H%M%S') }}_{{ states('sensor.speed_radar_vehicle_speed') }}kmh.mp4"
+        duration: 10
+
+# Announce speed on smart speaker (fun!)
+- id: speed_radar_announce_speed
+  alias: "Speed Radar - Announce Speeder"
+  description: "Announce on speaker when someone is speeding"
+  trigger:
+    - platform: numeric_state
+      entity_id: sensor.speed_radar_vehicle_speed
+      above: 45
+  condition:
+    - condition: time
+      after: "08:00:00"
+      before: "22:00:00"
+  action:
+    - service: tts.google_translate_say
+      target:
+        entity_id: media_player.living_room_speaker  # Replace with your speaker
+      data:
+        message: >-
+          Speeder detected. Going {{ states('sensor.speed_radar_vehicle_speed') | round }} kilometers per hour.

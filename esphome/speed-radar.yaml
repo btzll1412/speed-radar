@@ -1,0 +1,160 @@
+esphome:
+  name: speed-radar
+  friendly_name: Speed Radar
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+# External components - the custom HLK-LD2415H component
+external_components:
+  - source:
+      type: local
+      path: components
+
+# Ethernet configuration for WT32-ETH02
+ethernet:
+  type: LAN8720
+  mdc_pin: GPIO23
+  mdio_pin: GPIO18
+  clk_mode: GPIO0_OUT
+  phy_addr: 1
+  power_pin: GPIO16
+
+# Enable logging
+logger:
+  level: DEBUG
+  baud_rate: 0  # Disable UART logging since we're using UART for radar
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+# Enable OTA updates
+ota:
+  platform: esphome
+  password: !secret ota_password
+
+# UART for HLK-LD2415H radar
+uart:
+  id: radar_uart
+  rx_pin: GPIO5
+  tx_pin: GPIO17
+  baud_rate: 9600
+
+# HLK-LD2415H radar component
+hlk_ld2415h:
+  id: radar
+  uart_id: radar_uart
+
+# Sensors
+sensor:
+  - platform: hlk_ld2415h
+    speed:
+      name: "Vehicle Speed"
+      id: vehicle_speed
+      unit_of_measurement: "km/h"
+      accuracy_decimals: 1
+      icon: "mdi:speedometer"
+      filters:
+        - filter_out: 0
+
+  # Speed in mph (converted)
+  - platform: template
+    name: "Vehicle Speed MPH"
+    id: vehicle_speed_mph
+    unit_of_measurement: "mph"
+    accuracy_decimals: 1
+    icon: "mdi:speedometer"
+    lambda: |-
+      if (id(vehicle_speed).state > 0) {
+        return id(vehicle_speed).state * 0.621371;
+      }
+      return 0;
+    update_interval: 500ms
+
+  # Max speed today (resets at midnight)
+  - platform: template
+    name: "Max Speed Today"
+    id: max_speed_today
+    unit_of_measurement: "km/h"
+    accuracy_decimals: 1
+    icon: "mdi:speedometer-medium"
+
+  # Detection counter
+  - platform: template
+    name: "Detection Count"
+    id: detection_count
+    icon: "mdi:counter"
+    accuracy_decimals: 0
+
+  # Uptime sensor
+  - platform: uptime
+    name: "Uptime"
+
+  # WiFi signal (if using WiFi fallback)
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    update_interval: 60s
+
+# Text sensors
+text_sensor:
+  - platform: hlk_ld2415h
+    direction:
+      name: "Direction"
+      id: vehicle_direction
+      icon: "mdi:arrow-left-right"
+
+# Binary sensors
+binary_sensor:
+  - platform: hlk_ld2415h
+    vehicle_detected:
+      name: "Vehicle Detected"
+      id: vehicle_detected
+      device_class: motion
+      on_press:
+        then:
+          # Increment detection counter
+          - lambda: |-
+              id(detection_count).publish_state(id(detection_count).state + 1);
+          # Update max speed if current speed is higher
+          - lambda: |-
+              float current = id(vehicle_speed).state;
+              float max = id(max_speed_today).state;
+              if (current > max || isnan(max)) {
+                id(max_speed_today).publish_state(current);
+              }
+
+# Buttons
+button:
+  - platform: restart
+    name: "Restart"
+
+  - platform: template
+    name: "Reset Daily Stats"
+    icon: "mdi:refresh"
+    on_press:
+      then:
+        - lambda: |-
+            id(max_speed_today).publish_state(0);
+            id(detection_count).publish_state(0);
+
+# Time for midnight reset
+time:
+  - platform: homeassistant
+    id: homeassistant_time
+    on_time:
+      # Reset daily stats at midnight
+      - seconds: 0
+        minutes: 0
+        hours: 0
+        then:
+          - lambda: |-
+              id(max_speed_today).publish_state(0);
+              id(detection_count).publish_state(0);
+
+# Status LED (if available on your board)
+# status_led:
+#   pin: GPIO2

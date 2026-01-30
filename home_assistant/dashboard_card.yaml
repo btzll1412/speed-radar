@@ -1,0 +1,64 @@
+# Example Lovelace dashboard card for Speed Radar
+# Add this to your dashboard configuration
+
+type: vertical-stack
+cards:
+  # Header with current status
+  - type: horizontal-stack
+    cards:
+      - type: entity
+        entity: sensor.speed_radar_vehicle_speed
+        name: Current Speed
+        icon: mdi:speedometer
+        unit: km/h
+      - type: entity
+        entity: text_sensor.speed_radar_direction
+        name: Direction
+        icon: mdi:arrow-left-right
+      - type: entity
+        entity: binary_sensor.speed_radar_vehicle_detected
+        name: Detected
+        icon: mdi:car
+
+  # Gauge for current speed
+  - type: gauge
+    entity: sensor.speed_radar_vehicle_speed
+    name: Vehicle Speed
+    unit: km/h
+    min: 0
+    max: 120
+    severity:
+      green: 0
+      yellow: 40
+      red: 60
+    needle: true
+
+  # Daily statistics
+  - type: horizontal-stack
+    cards:
+      - type: entity
+        entity: sensor.speed_radar_max_speed_today
+        name: Max Today
+        icon: mdi:speedometer-medium
+      - type: entity
+        entity: sensor.speed_radar_detection_count
+        name: Vehicles Today
+        icon: mdi:counter
+
+  # History graph
+  - type: history-graph
+    entities:
+      - entity: sensor.speed_radar_vehicle_speed
+        name: Speed
+    hours_to_show: 24
+    refresh_interval: 60
+
+  # Statistics card (requires statistics integration)
+  - type: statistics-graph
+    entities:
+      - entity: sensor.speed_radar_vehicle_speed
+    stat_types:
+      - mean
+      - max
+      - min
+    days_to_show: 7
