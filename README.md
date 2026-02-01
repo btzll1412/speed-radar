@@ -715,9 +715,6 @@ speed-radar/
 │   │   ├── database.py              # SQLite database
 │   │   └── mqtt.py                  # MQTT communication
 │   └── templates/                   # Web UI templates
-├── docs/
-│   ├── WIRING.md                    # Detailed wiring guide
-│   └── INSTALLATION.md              # Step-by-step installation
 ├── esphome/
 │   ├── speed-radar.yaml             # Main ESPHome configuration
 │   ├── secrets.yaml.example         # Template for credentials

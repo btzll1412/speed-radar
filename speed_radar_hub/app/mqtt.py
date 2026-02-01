@@ -99,7 +99,7 @@ class MQTTClient:
             if msg.payload:
                 try:
                     data = json.loads(msg.payload.decode())
-                except:
+                except (json.JSONDecodeError, UnicodeDecodeError):
                     data = {"value": msg.payload.decode()}
             else:
                 data = {}

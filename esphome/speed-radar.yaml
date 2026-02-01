@@ -273,9 +273,10 @@ binary_sensor:
               condition:
                 lambda: 'return id(mqtt_enabled);'
               then:
-                - mqtt.publish:
+                - mqtt.publish_json:
                     topic: !lambda 'return "speed_radar/" + App.get_name() + "/detection";'
-                    payload: '{"event": "vehicle_passed"}'
+                    payload: |-
+                      root["event"] = "vehicle_passed";
                       root["speed"] = id(vehicle_speed).state;
                       root["direction"] = id(vehicle_direction).state;
                       root["vehicle_count"] = id(vehicle_count).state;

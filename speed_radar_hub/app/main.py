@@ -235,7 +235,7 @@ async def receive_radar_data(api_key: str, request: Request):
     # Parse JSON body
     try:
         data = await request.json()
-    except:
+    except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
     # Update last seen

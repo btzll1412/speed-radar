@@ -37,11 +37,11 @@ cards:
   - type: horizontal-stack
     cards:
       - type: entity
-        entity: sensor.speed_radar_max_speed_today
+        entity: sensor.speed_radar_max_speed
         name: Max Today
         icon: mdi:speedometer-medium
       - type: entity
-        entity: sensor.speed_radar_detection_count
+        entity: sensor.speed_radar_vehicle_count
         name: Vehicles Today
         icon: mdi:counter
 

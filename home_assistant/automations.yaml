@@ -71,8 +71,8 @@
         title: "Daily Speed Radar Summary"
         message: >-
           Today's stats:
-          - Vehicles detected: {{ states('sensor.speed_radar_detection_count') }}
-          - Max speed: {{ states('sensor.speed_radar_max_speed_today') }} km/h
+          - Vehicles detected: {{ states('sensor.speed_radar_vehicle_count') }}
+          - Max speed: {{ states('sensor.speed_radar_max_speed') }} km/h
 
 # Record security camera when speeder detected
 - id: speed_radar_trigger_camera
