@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+
+{% block title %}Speed Radar Hub - Dashboard{% endblock %}
+
+{% block content %}
+<header>
+    <h1>
+        <span class="icon">📡</span>
+        Speed Radar Hub
+    </h1>
+    <a href="{{ ingress_path }}/add" class="btn btn-primary">
+        + Add Radar
+    </a>
+</header>
+
+{% if radars %}
+<div class="grid">
+    {% for radar in radars %}
+    <div class="card">
+        <div class="card-header">
+            <div>
+                <h3 class="card-title">{{ radar.name }}</h3>
+                {% if radar.location %}
+                <small style="color: var(--text-muted);">{{ radar.location }}</small>
+                {% endif %}
+            </div>
+            <span class="status-badge {{ 'status-online' if radar.online else 'status-offline' }}">
+                <span class="status-dot"></span>
+                {{ 'Online' if radar.online else 'Offline' }}
+            </span>
+        </div>
+
+        <div class="stat-grid">
+            <div class="stat">
+                <div class="stat-value">{{ radar.stats.vehicle_count or 0 }}</div>
+                <div class="stat-label">Vehicles</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value">{{ "%.1f"|format(radar.stats.average_speed or 0) }}</div>
+                <div class="stat-label">Avg km/h</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value">{{ radar.stats.speeder_count or 0 }}</div>
+                <div class="stat-label">Speeders</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value" style="color: {% if (radar.stats.violation_percentage or 0) > 20 %}var(--danger){% elif (radar.stats.violation_percentage or 0) > 10 %}var(--warning){% else %}var(--success){% endif %}">
+                    {{ "%.1f"|format(radar.stats.violation_percentage or 0) }}%
+                </div>
+                <div class="stat-label">Violations</div>
+            </div>
+        </div>
+
+        <div style="margin-top: 15px; display: flex; justify-content: space-between; align-items: center;">
+            <small style="color: var(--text-muted);">
+                {% if radar.last_seen %}
+                Last seen: {{ radar.last_seen[:16] }}
+                {% else %}
+                Never connected
+                {% endif %}
+            </small>
+            <a href="{{ ingress_path }}/radar/{{ radar.id }}" class="btn btn-secondary btn-sm">
+                Details →
+            </a>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="empty-state">
+    <div class="icon">📡</div>
+    <h2>No Radars Registered</h2>
+    <p style="margin: 15px 0;">Add your first speed radar to start monitoring traffic.</p>
+    <a href="{{ ingress_path }}/add" class="btn btn-primary">
+        + Add Your First Radar
+    </a>
+</div>
+{% endif %}
+{% endblock %}

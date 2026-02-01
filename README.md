@@ -332,98 +332,86 @@ Or use Home Assistant's ESPHome dashboard for one-click updates
 
 ## Multi-Site / Remote Deployment
 
-Deploy multiple radars across your neighborhood, even on different networks. Each radar pushes data to your Home Assistant via HTTPS webhook.
+Deploy multiple radars across your neighborhood using the **Speed Radar Hub** add-on. No complicated webhook or token setup - just install the add-on and go!
 
 ### How It Works
 
 ```
-[Your House]                          [Neighbor's Network]
-┌─────────────────┐                   ┌─────────────────┐
-│ Home Assistant  │◄──── HTTPS ───────│ Speed Radar 2   │
-│                 │    (Cloudflare)   └─────────────────┘
-│ Cloudflare      │
-│ Tunnel          │◄──── HTTPS ───────┐
-└─────────────────┘                   │
-       ▲                         ┌─────────────────┐
-       │                         │ Speed Radar 3   │
-       │                         └─────────────────┘
-┌─────────────────┐              [Another Location]
-│ Speed Radar 1   │
-│ (Local network) │
-└─────────────────┘
+[Your House]                           [Remote Locations]
+┌──────────────────────┐               ┌─────────────────┐
+│ Home Assistant       │◄─── HTTPS ────│ Speed Radar 2   │
+│                      │   (Cloudflare)│ (Neighbor WiFi) │
+│ ┌──────────────────┐ │               └─────────────────┘
+│ │ Speed Radar Hub  │ │◄─── HTTPS ────┐
+│ │    Add-on        │ │               │
+│ │  - Web UI        │ │         ┌─────────────────┐
+│ │  - Auto API keys │ │         │ Speed Radar 3   │
+│ │  - MQTT→HA       │ │         │ (Mobile hotspot)│
+│ └──────────────────┘ │         └─────────────────┘
+│          ↓           │
+│   MQTT Discovery     │
+│          ↓           │
+│  [HA Entities auto-  │
+│   created for each   │
+│   radar]             │
+└──────────────────────┘
 ```
+
+### Speed Radar Hub Add-on Features
+
+| Feature | Description |
+|---------|-------------|
+| **One-click radar setup** | Click "Add Radar" → Get API URL |
+| **No tokens needed** | API key is embedded in URL |
+| **Auto HA integration** | Sensors created via MQTT discovery |
+| **Web dashboard** | View all radars, stats, readings |
+| **Historical data** | SQLite stores readings for analysis |
+| **Config sync** | Change settings from add-on UI |
+
+### Step 1: Install the Add-on
+
+1. Copy the `addon/` folder to your Home Assistant add-ons directory
+2. Go to **Settings → Add-ons → Add-on Store**
+3. Click the menu (⋮) → **Repositories**
+4. Add: `https://github.com/yourusername/speed-radar`
+5. Find "Speed Radar Hub" and click **Install**
+6. Start the add-on and open the Web UI
+
+### Step 2: Add a Radar
+
+1. Open Speed Radar Hub from the sidebar
+2. Click **Add Radar**
+3. Enter a name (e.g., "Main Street")
+4. Copy the generated API URL
+
+### Step 3: Configure the ESP32
+
+Set just ONE value on the radar:
+
+| Entity | Value |
+|--------|-------|
+| `text.speed_radar_radar_hub_url` | Paste the API URL from Step 2 |
+| `switch.speed_radar_enable_remote_push` | ON |
+
+That's it! The radar will start sending data to the Hub.
+
+### Step 4: Verify in Home Assistant
+
+Entities are auto-created via MQTT:
+- `sensor.main_street_speed`
+- `sensor.main_street_vehicle_count`
+- `sensor.main_street_average_speed`
+- `binary_sensor.main_street_vehicle_detected`
+- ...and more
 
 ### Security
 
 | Layer | Protection |
 |-------|------------|
-| **Webhook ID** | 20+ character random string (acts as password) |
+| **API Key** | 32-character random token per radar |
 | **HTTPS/TLS** | All data encrypted in transit |
-| **Cloudflare** | DDoS protection, WAF, hides your real IP |
-| **No open ports** | Cloudflare Tunnel = no port forwarding |
-
-### Step 1: Set Up Cloudflare Tunnel (if not already done)
-
-1. Install `cloudflared` on your HA machine
-2. Create a tunnel: `cloudflared tunnel create homeassistant`
-3. Configure the tunnel to route to your HA instance
-4. Your HA will be accessible at `https://ha.yourdomain.com`
-
-Or use **Nabu Casa** for an even simpler setup.
-
-### Step 2: Create a Webhook in Home Assistant
-
-1. Go to **Settings → Automations → Create Automation**
-2. Choose **Create new automation**
-3. Add trigger: **Webhook**
-4. Generate a secure webhook ID (20+ random characters)
-5. Set **Allowed Methods** to POST
-6. Set **Local Only** to OFF (allow from internet)
-7. Your webhook URL will be: `https://ha.yourdomain.com/api/webhook/YOUR_WEBHOOK_ID`
-
-Example automation (copy to `automations.yaml`):
-
-```yaml
-automation:
-  - id: 'speed_radar_webhook_receiver'
-    alias: "Speed Radar - Receive Remote Data"
-    trigger:
-      - platform: webhook
-        webhook_id: YOUR_SECRET_WEBHOOK_ID_HERE  # Generate random string
-        allowed_methods:
-          - POST
-        local_only: false
-    action:
-      - service: logbook.log
-        data:
-          name: "Speed Radar"
-          message: "{{ trigger.json.device }}: {{ trigger.json.speed }} km/h"
-```
-
-See `home_assistant/remote_radar_webhook.yaml` for a complete example with sensor creation.
-
-### Step 3: Configure the ESP32 Radar
-
-After deploying the radar to its remote location:
-
-1. Access the radar via the local network initially (or pre-configure before deployment)
-2. Set these entities in Home Assistant:
-
-| Entity | Value |
-|--------|-------|
-| `text.speed_radar_ha_webhook_url` | `https://ha.yourdomain.com/api/webhook/YOUR_WEBHOOK_ID` |
-| `text.speed_radar_device_location` | `Main Street` or unique name |
-| `switch.speed_radar_enable_remote_push` | ON |
-| `switch.speed_radar_push_on_detection` | ON (optional, for instant alerts) |
-
-### Step 4: Deploy to Remote Location
-
-1. Flash the ESP32 with WiFi credentials for the remote network:
-   - Edit `speed-radar.yaml` to add WiFi (see below)
-   - Or use a mobile hotspot for initial configuration
-2. Configure webhook URL via local access
-3. Deploy to remote location with internet access
-4. Verify data is arriving in Home Assistant
+| **Cloudflare** | DDoS protection, hides your IP |
+| **Ingress** | Add-on only accessible through HA |
 
 ### Adding WiFi for Remote Sites
 
@@ -450,94 +438,9 @@ wifi:
 
 | Entity | Type | Description |
 |--------|------|-------------|
-| `text.speed_radar_ha_webhook_url` | text | Full webhook URL |
-| `text.speed_radar_device_location` | text | Unique name for this radar |
+| `text.speed_radar_radar_hub_url` | text | Full API URL from add-on |
 | `switch.speed_radar_enable_remote_push` | switch | Enable/disable pushing |
 | `switch.speed_radar_push_on_detection` | switch | Push instantly on detection |
-
-### What Gets Pushed
-
-Every 30 seconds (when enabled), the radar sends:
-
-```json
-{
-  "device": "Main Street",
-  "speed": 45.2,
-  "direction": "Approaching",
-  "detected": true,
-  "vehicle_count": 127,
-  "approaching_count": 65,
-  "leaving_count": 62,
-  "average_speed": 42.5,
-  "max_speed": 68.3,
-  "speeder_count": 12,
-  "violation_percentage": 9.4,
-  "worst_speeder": 18.3,
-  "percentile_85": 52.1,
-  "peak_hour": 8,
-  "peak_hour_count": 23
-}
-```
-
-On vehicle detection (if push_on_detection enabled):
-
-```json
-{
-  "device": "Main Street",
-  "event": "vehicle_detected",
-  "speed": 58.5,
-  "direction": "Approaching",
-  "vehicle_count": 128,
-  "speeder": true,
-  "timestamp": 1704067200
-}
-```
-
-### Multi-Radar Dashboard
-
-Create a unified dashboard for all radars:
-
-```yaml
-type: vertical-stack
-cards:
-  - type: markdown
-    content: "## 📡 Neighborhood Speed Monitoring"
-
-  - type: horizontal-stack
-    cards:
-      - type: entity
-        entity: sensor.main_street_speed
-        name: Main St
-        icon: mdi:speedometer
-      - type: entity
-        entity: sensor.oak_avenue_speed
-        name: Oak Ave
-        icon: mdi:speedometer
-      - type: entity
-        entity: sensor.elm_drive_speed
-        name: Elm Dr
-        icon: mdi:speedometer
-
-  - type: entities
-    title: Combined Statistics
-    entities:
-      - type: custom:template-entity-row
-        name: Total Vehicles Today
-        state: >
-          {{ states('sensor.main_street_speed') | attr('vehicle_count') | int +
-             states('sensor.oak_avenue_speed') | attr('vehicle_count') | int +
-             states('sensor.elm_drive_speed') | attr('vehicle_count') | int }}
-```
-
-### Troubleshooting Remote Push
-
-| Issue | Solution |
-|-------|----------|
-| No data arriving | Check webhook URL is correct, verify `Enable Remote Push` is ON |
-| 401/403 errors | Webhook ID mismatch, check for typos |
-| Connection timeout | Check internet connection at remote site |
-| Intermittent push | Unstable WiFi, consider Ethernet if possible |
-| Data arriving late | Normal - pushes every 30 seconds unless instant mode |
 
 ### Cost for Remote Sites
 
@@ -547,7 +450,7 @@ cards:
 | Cellular hotspot | $20-50 | $10-20/mo |
 | Starlink | $500+ | $120/mo |
 
-Most practical: Ask neighbors to share WiFi access for the radar. Data usage is minimal (<1 MB/day).
+Most practical: Ask neighbors to share WiFi access. Data usage is minimal (<1 MB/day).
 
 ## Home Assistant Entities
 
@@ -742,6 +645,16 @@ The HLK-LD2415H outputs simple ASCII at 9600 baud:
 ```
 speed-radar/
 ├── README.md
+├── addon/                           # Speed Radar Hub HA Add-on
+│   ├── config.yaml                  # Add-on configuration
+│   ├── Dockerfile
+│   ├── run.sh
+│   ├── requirements.txt
+│   ├── app/
+│   │   ├── main.py                  # FastAPI application
+│   │   ├── database.py              # SQLite database
+│   │   └── mqtt.py                  # MQTT discovery
+│   └── templates/                   # Web UI templates
 ├── docs/
 │   ├── WIRING.md                    # Detailed wiring guide
 │   └── INSTALLATION.md              # Step-by-step installation
@@ -758,8 +671,7 @@ speed-radar/
 │           └── hlk_ld2415h.cpp
 └── home_assistant/
     ├── automations.yaml             # Example automations
-    ├── dashboard_card.yaml          # Example Lovelace card
-    └── remote_radar_webhook.yaml    # Multi-site deployment config
+    └── dashboard_card.yaml          # Example Lovelace card
 ```
 
 ## License

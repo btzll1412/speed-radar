@@ -42,17 +42,10 @@ http_request:
   useragent: "ESPHome/SpeedRadar"
   timeout: 10s
 
-# Global variables for remote push/pull configuration
+# Global variables for remote push configuration
 globals:
-  - id: ha_webhook_url
-    type: std::string
-    restore_value: no
-    initial_value: '""'
-  - id: ha_base_url
-    type: std::string
-    restore_value: no
-    initial_value: '""'
-  - id: ha_token
+  # Single URL for Speed Radar Hub (includes API key)
+  - id: radar_hub_url
     type: std::string
     restore_value: no
     initial_value: '""'
@@ -60,14 +53,6 @@ globals:
     type: bool
     restore_value: yes
     initial_value: 'false'
-  - id: config_sync_enabled
-    type: bool
-    restore_value: yes
-    initial_value: 'false'
-  - id: device_location
-    type: std::string
-    restore_value: no
-    initial_value: '"Speed Radar 1"'
 
 # UART for HLK-LD2415H radar
 uart:
@@ -206,22 +191,20 @@ binary_sensor:
           - if:
               condition:
                 and:
-                  - lambda: 'return id(push_enabled) && id(ha_webhook_url).length() > 10;'
+                  - lambda: 'return id(push_enabled) && id(radar_hub_url).length() > 10;'
                   - switch.is_on: push_on_detection_switch
               then:
                 - delay: 500ms  # Wait for speed reading to stabilize
                 - http_request.post:
-                    url: !lambda 'return id(ha_webhook_url);'
+                    url: !lambda 'return id(radar_hub_url);'
                     headers:
                       Content-Type: application/json
                     json: |-
-                      root["device"] = id(device_location);
                       root["event"] = "vehicle_detected";
                       root["speed"] = id(vehicle_speed).state;
                       root["direction"] = id(vehicle_direction).state;
                       root["vehicle_count"] = id(vehicle_count).state;
                       root["speeder"] = id(vehicle_speed).state > id(speed_limit_input).state;
-                      root["timestamp"] = id(homeassistant_time).now().timestamp;
 
 # Buttons
 button:
@@ -398,7 +381,7 @@ time:
               id(radar).set_current_hour(time.hour);
             }
 
-# Update current hour every minute and push data to remote HA
+# Update current hour every minute and push data to Speed Radar Hub
 interval:
   - interval: 1min
     then:
@@ -408,19 +391,18 @@ interval:
             id(radar).set_current_hour(time.hour);
           }
 
-  # Push data to remote Home Assistant every 30 seconds (when enabled)
+  # Push data to Speed Radar Hub every 30 seconds (when enabled)
   - interval: 30s
     then:
       - if:
           condition:
-            lambda: 'return id(push_enabled) && id(ha_webhook_url).length() > 10;'
+            lambda: 'return id(push_enabled) && id(radar_hub_url).length() > 10;'
           then:
             - http_request.post:
-                url: !lambda 'return id(ha_webhook_url);'
+                url: !lambda 'return id(radar_hub_url);'
                 headers:
                   Content-Type: application/json
                 json: |-
-                  root["device"] = id(device_location);
                   root["speed"] = id(vehicle_speed).state;
                   root["direction"] = id(vehicle_direction).state;
                   root["detected"] = id(vehicle_detected).state;
@@ -439,95 +421,26 @@ interval:
                   then:
                     - lambda: |-
                         if (response->status_code == 200) {
-                          ESP_LOGI("http_push", "Data pushed successfully");
-                          // Check response headers for config updates
-                          // HA can set X-Config-* headers to push settings back
-                          // This avoids complex JSON parsing
+                          ESP_LOGI("radar_hub", "Data pushed successfully");
+                          // Config is returned in response - could parse and apply
                         } else {
-                          ESP_LOGW("http_push", "Push failed with code: %d", response->status_code);
+                          ESP_LOGW("radar_hub", "Push failed: %d", response->status_code);
                         }
 
-  # Fetch configuration from Home Assistant every 60 seconds (when enabled)
-  # Uses HA REST API with Long-Lived Access Token
-  - interval: 60s
-    then:
-      - if:
-          condition:
-            lambda: 'return id(config_sync_enabled) && id(ha_base_url).length() > 10 && id(ha_token).length() > 10;'
-          then:
-            # Request config from HA - sends device ID, receives settings
-            - http_request.post:
-                url: !lambda 'return id(ha_base_url) + "/api/services/script/speed_radar_get_config";'
-                headers:
-                  Authorization: !lambda 'return "Bearer " + id(ha_token);'
-                  Content-Type: application/json
-                json: |-
-                  root["device"] = id(device_location);
-                  root["current_speed_limit"] = id(speed_limit_input).state;
-                  root["current_min_threshold"] = id(min_speed_input).state;
-                  root["current_direction_filter"] = id(direction_filter_select).state;
-                on_response:
-                  then:
-                    - lambda: |-
-                        if (response->status_code == 200) {
-                          ESP_LOGI("config_sync", "Config sync request sent");
-                        } else {
-                          ESP_LOGD("config_sync", "Config sync returned: %d", response->status_code);
-                        }
-
-# Text inputs for remote push configuration
+# Single text input for Speed Radar Hub URL (includes API key)
 text:
   - platform: template
-    name: "HA Webhook URL"
-    id: webhook_url_input
+    name: "Radar Hub URL"
+    id: radar_hub_url_input
     mode: text
     optimistic: true
     restore_value: true
-    icon: "mdi:webhook"
+    icon: "mdi:radar"
     on_value:
       then:
         - lambda: |-
-            id(ha_webhook_url) = x;
-            ESP_LOGI("config", "Webhook URL updated");
-
-  - platform: template
-    name: "Device Location"
-    id: device_location_input
-    mode: text
-    optimistic: true
-    restore_value: true
-    initial_value: "Speed Radar 1"
-    icon: "mdi:map-marker"
-    on_value:
-      then:
-        - lambda: |-
-            id(device_location) = x;
-
-  - platform: template
-    name: "HA Base URL"
-    id: ha_base_url_input
-    mode: text
-    optimistic: true
-    restore_value: true
-    icon: "mdi:home-assistant"
-    on_value:
-      then:
-        - lambda: |-
-            id(ha_base_url) = x;
-            ESP_LOGI("config", "HA Base URL updated: %s", x.c_str());
-
-  - platform: template
-    name: "HA Access Token"
-    id: ha_token_input
-    mode: password
-    optimistic: true
-    restore_value: true
-    icon: "mdi:key"
-    on_value:
-      then:
-        - lambda: |-
-            id(ha_token) = x;
-            ESP_LOGI("config", "HA Token updated");
+            id(radar_hub_url) = x;
+            ESP_LOGI("config", "Radar Hub URL updated");
 
 # Switch to enable/disable remote push
 switch:
@@ -552,18 +465,3 @@ switch:
     icon: "mdi:car-wireless"
     optimistic: true
     restore_mode: RESTORE_DEFAULT_OFF
-
-  - platform: template
-    name: "Enable Config Sync"
-    id: config_sync_switch
-    icon: "mdi:cloud-download"
-    optimistic: true
-    restore_mode: RESTORE_DEFAULT_OFF
-    on_turn_on:
-      then:
-        - lambda: 'id(config_sync_enabled) = true;'
-        - logger.log: "Config sync enabled"
-    on_turn_off:
-      then:
-        - lambda: 'id(config_sync_enabled) = false;'
-        - logger.log: "Config sync disabled"

@@ -1,0 +1,60 @@
+# Speed Radar Hub - Home Assistant Add-on Configuration
+name: "Speed Radar Hub"
+description: "Central hub for managing multiple speed radar units across different networks"
+version: "1.0.0"
+slug: "speed_radar_hub"
+url: "https://github.com/yourusername/speed-radar"
+arch:
+  - aarch64
+  - amd64
+  - armhf
+  - armv7
+  - i386
+
+# Run as root for network access
+init: false
+homeassistant_api: true
+hassio_api: true
+
+# Ingress for web UI
+ingress: true
+ingress_port: 8103
+ingress_stream: false
+panel_icon: "mdi:radar"
+panel_title: "Speed Radar"
+
+# Network ports
+ports:
+  8103/tcp: null  # Ingress handles this
+ports_description:
+  8103/tcp: "Web UI and API"
+
+# Options the user can configure
+options:
+  mqtt_host: "core-mosquitto"
+  mqtt_port: 1883
+  mqtt_username: ""
+  mqtt_password: ""
+  data_retention_days: 30
+  timezone: "UTC"
+
+schema:
+  mqtt_host: str
+  mqtt_port: port
+  mqtt_username: str?
+  mqtt_password: password?
+  data_retention_days: int(1,365)
+  timezone: str
+
+# Startup priority
+startup: services
+stage: stable
+
+# Map config for persistent storage
+map:
+  - config:rw
+  - share:rw
+
+# Environment
+environment:
+  PYTHONUNBUFFERED: "1"

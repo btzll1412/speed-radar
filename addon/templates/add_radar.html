@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+
+{% block title %}Add Radar - Speed Radar Hub{% endblock %}
+
+{% block content %}
+<a href="{{ ingress_path }}/" class="back-link">
+    ← Back to Dashboard
+</a>
+
+<div class="card" style="max-width: 600px;">
+    <h2 class="card-title" style="margin-bottom: 20px;">Add New Radar</h2>
+
+    <form method="POST" action="{{ ingress_path }}/add">
+        <div class="form-group">
+            <label for="name">Radar Name *</label>
+            <input type="text" id="name" name="name" class="form-control"
+                   placeholder="e.g., Main Street" required>
+        </div>
+
+        <div class="form-group">
+            <label for="location">Location Description</label>
+            <input type="text" id="location" name="location" class="form-control"
+                   placeholder="e.g., Near Oak Avenue intersection">
+        </div>
+
+        <div class="form-group">
+            <label for="notes">Notes</label>
+            <textarea id="notes" name="notes" class="form-control" rows="3"
+                      placeholder="Any additional notes about this radar..."></textarea>
+        </div>
+
+        <div style="display: flex; gap: 10px; margin-top: 20px;">
+            <button type="submit" class="btn btn-primary">
+                Create Radar
+            </button>
+            <a href="{{ ingress_path }}/" class="btn btn-secondary">
+                Cancel
+            </a>
+        </div>
+    </form>
+</div>
+
+<div class="card" style="max-width: 600px; margin-top: 20px;">
+    <h3 style="margin-bottom: 15px;">What Happens Next?</h3>
+    <ol style="line-height: 2; padding-left: 20px; color: var(--text-muted);">
+        <li>An API key will be generated for your radar</li>
+        <li>Copy the API URL to your ESP32 configuration</li>
+        <li>The radar will appear in Home Assistant automatically via MQTT</li>
+        <li>Data starts flowing when the radar connects!</li>
+    </ol>
+</div>
+{% endblock %}
