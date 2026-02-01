@@ -21,9 +21,6 @@ COPY templates/ ./templates/
 COPY static/ ./static/
 COPY run.sh /
 
-# Copy nginx config
-COPY rootfs/ /
-
 # Make run script executable
 RUN chmod a+x /run.sh
 
