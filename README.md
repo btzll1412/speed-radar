@@ -91,12 +91,18 @@ Radar → ESP32:
 
 1. Copy `esphome/speed-radar.yaml` to your ESPHome config directory
 2. Copy `esphome/components/hlk_ld2415h/` folder to your ESPHome components directory
-3. Create `secrets.yaml` with your credentials:
+3. Create `secrets.yaml` with your credentials (see `secrets.yaml.example`):
 
 ```yaml
 # secrets.yaml
 api_encryption_key: "your-32-character-base64-key-here"
 ota_password: "your-ota-password"
+
+# MQTT for instant communication (required for multi-site)
+mqtt_broker: "192.168.1.100"      # Your HA IP or external hostname
+mqtt_port: "1883"
+mqtt_username: "radar"
+mqtt_password: "your-mqtt-password"
 ```
 
 Generate an API key with: `openssl rand -base64 32`
@@ -332,86 +338,139 @@ Or use Home Assistant's ESPHome dashboard for one-click updates
 
 ## Multi-Site / Remote Deployment
 
-Deploy multiple radars across your neighborhood using the **Speed Radar Hub** add-on. No complicated webhook or token setup - just install the add-on and go!
+Deploy multiple radars across your neighborhood using the **Speed Radar Hub** add-on with **instant MQTT communication**. Updates appear in Home Assistant immediately - just like VoIP phones connected to a server.
 
 ### How It Works
 
 ```
 [Your House]                           [Remote Locations]
 ┌──────────────────────┐               ┌─────────────────┐
-│ Home Assistant       │◄─── HTTPS ────│ Speed Radar 2   │
-│                      │   (Cloudflare)│ (Neighbor WiFi) │
-│ ┌──────────────────┐ │               └─────────────────┘
-│ │ Speed Radar Hub  │ │◄─── HTTPS ────┐
-│ │    Add-on        │ │               │
-│ │  - Web UI        │ │         ┌─────────────────┐
-│ │  - Auto API keys │ │         │ Speed Radar 3   │
-│ │  - MQTT→HA       │ │         │ (Mobile hotspot)│
-│ └──────────────────┘ │         └─────────────────┘
-│          ↓           │
+│ Home Assistant       │               │ Speed Radar 2   │
+│                      │               │ (Neighbor WiFi) │
+│ ┌──────────────────┐ │               └────────┬────────┘
+│ │ Speed Radar Hub  │ │                        │
+│ │    Add-on        │ │                        │ MQTT
+│ │  - Web UI        │ │                        │ (instant)
+│ │  - Config push   │ │                        │
+│ └────────┬─────────┘ │               ┌────────┴────────┐
+│          │           │               │ Speed Radar 3   │
+│          ▼           │               │ (Mobile hotspot)│
+│ ┌──────────────────┐ │               └────────┬────────┘
+│ │  MQTT Broker     │◄├───────────────────────┘
+│ │  (Mosquitto)     │ │  All radars connect to same broker
+│ └────────┬─────────┘ │
+│          │           │
 │   MQTT Discovery     │
-│          ↓           │
+│          ▼           │
 │  [HA Entities auto-  │
 │   created for each   │
 │   radar]             │
 └──────────────────────┘
 ```
 
+### Instant Communication
+
+| Direction | How It Works | Latency |
+|-----------|--------------|---------|
+| **Radar → HA** | MQTT publish on every detection | Instant (~50ms) |
+| **HA → Radar** | MQTT publish on config change | Instant (~50ms) |
+
+This is the same architecture used by VoIP phones - always-connected, bidirectional, instant updates.
+
 ### Speed Radar Hub Add-on Features
 
 | Feature | Description |
 |---------|-------------|
-| **One-click radar setup** | Click "Add Radar" → Get API URL |
-| **No tokens needed** | API key is embedded in URL |
+| **Instant updates** | MQTT pub/sub for real-time communication |
+| **Instant config sync** | Change settings in UI → applies to radar instantly |
 | **Auto HA integration** | Sensors created via MQTT discovery |
 | **Web dashboard** | View all radars, stats, readings |
 | **Historical data** | SQLite stores readings for analysis |
-| **Config sync** | Change settings from add-on UI |
+| **One-click radar setup** | Click "Add Radar" → configure MQTT |
 
-### Step 1: Install the Add-on
+### Step 1: Install Mosquitto MQTT Broker
+
+1. Go to **Settings → Add-ons → Add-on Store**
+2. Search for "Mosquitto broker" and click **Install**
+3. Go to the add-on's **Configuration** tab
+4. Add a user/password for your radars (or use HA credentials)
+5. Start the add-on
+
+### Step 2: Install Speed Radar Hub Add-on
 
 1. Copy the `addon/` folder to your Home Assistant add-ons directory
 2. Go to **Settings → Add-ons → Add-on Store**
 3. Click the menu (⋮) → **Repositories**
 4. Add: `https://github.com/yourusername/speed-radar`
 5. Find "Speed Radar Hub" and click **Install**
-6. Start the add-on and open the Web UI
-
-### Step 2: Add a Radar
-
-1. Open Speed Radar Hub from the sidebar
-2. Click **Add Radar**
-3. Enter a name (e.g., "Main Street")
-4. Copy the generated API URL
+6. Configure the add-on with your Mosquitto credentials
+7. Start the add-on and open the Web UI
 
 ### Step 3: Configure the ESP32
 
-Set just ONE value on the radar:
+Add MQTT settings to your `secrets.yaml`:
 
-| Entity | Value |
-|--------|-------|
-| `text.speed_radar_radar_hub_url` | Paste the API URL from Step 2 |
-| `switch.speed_radar_enable_remote_push` | ON |
+```yaml
+# MQTT Broker (for instant communication)
+mqtt_broker: "your-home-assistant.duckdns.org"  # or IP for local
+mqtt_port: "1883"
+mqtt_username: "radar"
+mqtt_password: "your-mqtt-password"
+```
 
-That's it! The radar will start sending data to the Hub.
+For remote sites, the broker must be accessible from the internet (via Cloudflare Tunnel or port forwarding).
 
-### Step 4: Verify in Home Assistant
+### Step 4: Add Radar in Hub UI
 
-Entities are auto-created via MQTT:
+1. Open Speed Radar Hub from the sidebar
+2. Click **Add Radar**
+3. Enter a name (e.g., "Main Street") - this must match the ESP's device name
+4. The radar will automatically connect via MQTT
+
+### Step 5: Verify in Home Assistant
+
+Entities are auto-created via MQTT discovery:
 - `sensor.main_street_speed`
 - `sensor.main_street_vehicle_count`
 - `sensor.main_street_average_speed`
 - `binary_sensor.main_street_vehicle_detected`
 - ...and more
 
+Settings changed in the Hub UI apply to the radar **instantly**.
+
 ### Security
 
 | Layer | Protection |
 |-------|------------|
-| **API Key** | 32-character random token per radar |
-| **HTTPS/TLS** | All data encrypted in transit |
-| **Cloudflare** | DDoS protection, hides your IP |
-| **Ingress** | Add-on only accessible through HA |
+| **MQTT Auth** | Username/password per radar |
+| **TLS/SSL** | Encrypt MQTT with TLS (port 8883) |
+| **Cloudflare Tunnel** | Expose MQTT securely without port forwarding |
+| **Ingress** | Add-on UI only accessible through HA |
+
+### Exposing MQTT for Remote Sites
+
+For radars outside your home network to connect, your MQTT broker must be accessible:
+
+**Option 1: Cloudflare Tunnel (Recommended)**
+```bash
+# Add TCP tunnel for MQTT
+cloudflared tunnel route tcp 1883
+```
+
+**Option 2: Port Forward**
+- Forward port 1883 (or 8883 for TLS) to your Home Assistant IP
+- Use TLS for security
+
+**Option 3: Cloud MQTT Broker**
+- Use a cloud broker like HiveMQ Cloud, CloudMQTT, or EMQX Cloud
+- All radars and the add-on connect to the cloud broker
+- No port forwarding needed
+
+Update `secrets.yaml` on remote radars with the external address:
+```yaml
+mqtt_broker: "your-home.duckdns.org"  # External address
+mqtt_port: "8883"                      # TLS port
+```
 
 ### Adding WiFi for Remote Sites
 
@@ -434,13 +493,13 @@ wifi:
 #   ...
 ```
 
-### Remote Push Entities
+### MQTT Entities
 
 | Entity | Type | Description |
 |--------|------|-------------|
-| `text.speed_radar_radar_hub_url` | text | Full API URL from add-on |
-| `switch.speed_radar_enable_remote_push` | switch | Enable/disable pushing |
-| `switch.speed_radar_push_on_detection` | switch | Push instantly on detection |
+| `switch.speed_radar_mqtt_enabled` | switch | Enable/disable MQTT communication |
+
+MQTT settings are configured in `secrets.yaml` and applied at boot.
 
 ### Cost for Remote Sites
 
