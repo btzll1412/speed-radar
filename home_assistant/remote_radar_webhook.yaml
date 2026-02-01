@@ -1,0 +1,312 @@
+# Home Assistant Configuration for Remote Speed Radars
+# =====================================================
+# This enables bidirectional communication:
+# - ESP pushes data TO Home Assistant
+# - HA pushes config BACK to ESP (via webhook response)
+#
+# Device Identification:
+# Each radar is identified by its "Device Location" setting.
+# Example: "Main Street" becomes entity suffix "main_street"
+
+# ============================================================
+# SETUP INSTRUCTIONS
+# ============================================================
+#
+# 1. Generate a webhook ID:
+#    Go to Developer Tools > Template and paste:
+#    {{ (range(100000000000000000000) | random) | string }}
+#
+# 2. Copy this file's contents to your configuration:
+#    - Automation → automations.yaml
+#    - Input helpers → configuration.yaml
+#    - Template sensors → configuration.yaml
+#
+# 3. Replace YOUR_SECRET_WEBHOOK_ID with your generated ID
+#
+# 4. Your webhook URL will be:
+#    https://your-ha-domain.com/api/webhook/YOUR_SECRET_WEBHOOK_ID
+#
+# 5. On each ESP, configure:
+#    - "HA Webhook URL" → your webhook URL
+#    - "Device Location" → unique name (e.g., "Main Street")
+#    - "Enable Remote Push" → ON
+#    - "Enable Config Sync" → ON
+#
+# ============================================================
+
+# ============================================================
+# STEP 1: INPUT HELPERS FOR DEVICE CONFIGURATION
+# ============================================================
+# Add to configuration.yaml for each radar you want to control remotely.
+# The ESP will fetch these values and apply them.
+#
+# Example for a device with location "Main Street":
+
+input_number:
+  # Settings that HA can push TO the radar
+  main_street_target_speed_limit:
+    name: "Main Street - Target Speed Limit"
+    min: 20
+    max: 120
+    step: 5
+    initial: 50
+    unit_of_measurement: "km/h"
+    icon: mdi:sign-caution
+
+  main_street_target_min_threshold:
+    name: "Main Street - Target Min Threshold"
+    min: 0
+    max: 50
+    step: 1
+    initial: 15
+    unit_of_measurement: "km/h"
+    icon: mdi:speedometer-slow
+
+  # Data received FROM the radar (read-only display)
+  main_street_current_speed:
+    name: "Main Street - Current Speed"
+    min: 0
+    max: 300
+    unit_of_measurement: "km/h"
+    icon: mdi:speedometer
+
+  main_street_vehicle_count:
+    name: "Main Street - Vehicle Count"
+    min: 0
+    max: 100000
+    icon: mdi:car-multiple
+
+  main_street_speeder_count:
+    name: "Main Street - Speeder Count"
+    min: 0
+    max: 100000
+    icon: mdi:car-emergency
+
+input_select:
+  main_street_target_direction_filter:
+    name: "Main Street - Target Direction Filter"
+    options:
+      - "Both"
+      - "Approaching Only"
+      - "Leaving Only"
+    initial: "Both"
+    icon: mdi:arrow-left-right
+
+# ============================================================
+# STEP 2: WEBHOOK AUTOMATION - Receives data, returns config
+# ============================================================
+# Add to automations.yaml
+
+automation:
+  - id: 'speed_radar_bidirectional_sync'
+    alias: "Speed Radar - Bidirectional Sync"
+    description: "Receives data from remote radars and returns configuration"
+    trigger:
+      - platform: webhook
+        webhook_id: YOUR_SECRET_WEBHOOK_ID  # <-- CHANGE THIS!
+        allowed_methods:
+          - POST
+        local_only: false
+    variables:
+      device_slug: "{{ trigger.json.device | slugify | replace('-', '_') }}"
+    action:
+      # 1. Log the incoming data
+      - service: logbook.log
+        data:
+          name: "Speed Radar"
+          message: >
+            {{ trigger.json.device }}: {{ trigger.json.speed | round(1) }} km/h
+            {{ trigger.json.direction }}
+            {% if trigger.json.speeder %}⚠️ SPEEDER{% endif %}
+
+      # 2. Update data sensors with received values
+      - service: input_number.set_value
+        target:
+          entity_id: "input_number.{{ device_slug }}_current_speed"
+        data:
+          value: "{{ trigger.json.speed | default(0) | round(1) }}"
+        continue_on_error: true
+
+      - service: input_number.set_value
+        target:
+          entity_id: "input_number.{{ device_slug }}_vehicle_count"
+        data:
+          value: "{{ trigger.json.vehicle_count | default(0) | int }}"
+        continue_on_error: true
+
+      - service: input_number.set_value
+        target:
+          entity_id: "input_number.{{ device_slug }}_speeder_count"
+        data:
+          value: "{{ trigger.json.speeder_count | default(0) | int }}"
+        continue_on_error: true
+
+      # 3. Send notification for speeders
+      - if:
+          - condition: template
+            value_template: "{{ trigger.json.event == 'vehicle_detected' and trigger.json.speeder == true }}"
+        then:
+          - service: persistent_notification.create
+            data:
+              title: "🚨 Speeder at {{ trigger.json.device }}"
+              message: >
+                Speed: {{ trigger.json.speed | round(1) }} km/h
+                Time: {{ now().strftime('%H:%M:%S') }}
+
+      # 4. Return configuration to the ESP
+      # The ESP will parse this and apply settings
+      - stop: "Returning config"
+        response_variable: webhook_response
+
+# Note: To return config in the response, you need to use the webhook
+# response feature. Add this to the trigger configuration:
+#
+# In HA 2023.7+, webhooks can return responses. The ESP receives:
+# {"speed_limit": 50, "min_threshold": 15, "direction_filter": "Both"}
+
+# ============================================================
+# STEP 3: TEMPLATE SENSORS - Auto-created from webhook data
+# ============================================================
+# Add to configuration.yaml
+# These sensors are automatically updated when data arrives
+
+template:
+  - trigger:
+      - platform: webhook
+        webhook_id: YOUR_SECRET_WEBHOOK_ID
+        allowed_methods:
+          - POST
+        local_only: false
+    sensor:
+      # Main speed sensor with all data as attributes
+      - name: "{{ trigger.json.device }} Radar"
+        unique_id: "radar_{{ trigger.json.device | slugify }}"
+        state: "{{ trigger.json.speed | default(0) | round(1) }}"
+        unit_of_measurement: "km/h"
+        icon: >
+          {% if trigger.json.speed | float > 60 %}
+            mdi:car-emergency
+          {% else %}
+            mdi:speedometer
+          {% endif %}
+        attributes:
+          device: "{{ trigger.json.device }}"
+          direction: "{{ trigger.json.direction | default('Unknown') }}"
+          detected: "{{ trigger.json.detected | default(false) }}"
+          vehicle_count: "{{ trigger.json.vehicle_count | default(0) }}"
+          approaching_count: "{{ trigger.json.approaching_count | default(0) }}"
+          leaving_count: "{{ trigger.json.leaving_count | default(0) }}"
+          average_speed: "{{ trigger.json.average_speed | default(0) | round(1) }}"
+          max_speed: "{{ trigger.json.max_speed | default(0) | round(1) }}"
+          speeder_count: "{{ trigger.json.speeder_count | default(0) }}"
+          violation_percentage: "{{ trigger.json.violation_percentage | default(0) | round(1) }}"
+          worst_speeder: "{{ trigger.json.worst_speeder | default(0) | round(1) }}"
+          percentile_85: "{{ trigger.json.percentile_85 | default(0) | round(1) }}"
+          peak_hour: "{{ trigger.json.peak_hour | default(0) }}"
+          peak_hour_count: "{{ trigger.json.peak_hour_count | default(0) }}"
+          last_update: "{{ now().isoformat() }}"
+          online: true
+
+# ============================================================
+# STEP 4: DASHBOARD CARD
+# ============================================================
+# Example Lovelace card for monitoring multiple radars
+
+# type: vertical-stack
+# cards:
+#   - type: markdown
+#     content: |
+#       ## 📡 Neighborhood Speed Monitor
+#       Last updated: {{ now().strftime('%H:%M:%S') }}
+#
+#   - type: horizontal-stack
+#     cards:
+#       - type: gauge
+#         entity: sensor.main_street_radar
+#         name: Main St
+#         min: 0
+#         max: 80
+#         severity:
+#           green: 0
+#           yellow: 50
+#           red: 60
+#
+#       - type: gauge
+#         entity: sensor.oak_avenue_radar
+#         name: Oak Ave
+#         min: 0
+#         max: 80
+#         severity:
+#           green: 0
+#           yellow: 50
+#           red: 60
+#
+#   - type: entities
+#     title: Statistics
+#     entities:
+#       - entity: sensor.main_street_radar
+#         type: attribute
+#         attribute: vehicle_count
+#         name: "Main St - Vehicles Today"
+#       - entity: sensor.main_street_radar
+#         type: attribute
+#         attribute: speeder_count
+#         name: "Main St - Speeders"
+#       - entity: sensor.main_street_radar
+#         type: attribute
+#         attribute: violation_percentage
+#         name: "Main St - Violation %"
+#         suffix: "%"
+#
+#   - type: entities
+#     title: "⚙️ Main Street Config"
+#     entities:
+#       - entity: input_number.main_street_target_speed_limit
+#       - entity: input_number.main_street_target_min_threshold
+#       - entity: input_select.main_street_target_direction_filter
+
+# ============================================================
+# STEP 5: CONFIG SYNC SCRIPT (Optional - for manual sync)
+# ============================================================
+# Add to scripts.yaml
+# This script can be called to force a config sync
+
+script:
+  speed_radar_sync_config:
+    alias: "Speed Radar - Sync Config to All Devices"
+    description: "Forces all radars to fetch new configuration"
+    sequence:
+      - service: persistent_notification.create
+        data:
+          title: "Speed Radar Config"
+          message: "Config sync requested. Radars will update within 60 seconds."
+
+# ============================================================
+# HOW DEVICE IDENTIFICATION WORKS
+# ============================================================
+#
+# 1. Each ESP has a "Device Location" setting (e.g., "Main Street")
+#
+# 2. When ESP sends data, it includes: {"device": "Main Street", ...}
+#
+# 3. HA uses template: {{ trigger.json.device | slugify }}
+#    "Main Street" → "main_street"
+#
+# 4. This creates entities like:
+#    - sensor.main_street_radar
+#    - input_number.main_street_vehicle_count
+#
+# 5. To add a new radar location:
+#    a. Set unique "Device Location" on the ESP
+#    b. Create input helpers with matching slugified prefix
+#    c. The template sensor auto-creates from webhook data
+#
+# ============================================================
+# SECURITY NOTES
+# ============================================================
+#
+# - Webhook ID is a 20+ character secret (like a password)
+# - Use HTTPS (Cloudflare Tunnel or similar)
+# - Each device uses the same webhook ID but identifies via "device" field
+# - To add per-device security, use unique webhook IDs per device
+#

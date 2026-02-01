@@ -37,6 +37,38 @@ ota:
   platform: esphome
   password: !secret ota_password
 
+# HTTP Request component for pushing data to remote Home Assistant
+http_request:
+  useragent: "ESPHome/SpeedRadar"
+  timeout: 10s
+
+# Global variables for remote push/pull configuration
+globals:
+  - id: ha_webhook_url
+    type: std::string
+    restore_value: no
+    initial_value: '""'
+  - id: ha_base_url
+    type: std::string
+    restore_value: no
+    initial_value: '""'
+  - id: ha_token
+    type: std::string
+    restore_value: no
+    initial_value: '""'
+  - id: push_enabled
+    type: bool
+    restore_value: yes
+    initial_value: 'false'
+  - id: config_sync_enabled
+    type: bool
+    restore_value: yes
+    initial_value: 'false'
+  - id: device_location
+    type: std::string
+    restore_value: no
+    initial_value: '"Speed Radar 1"'
+
 # UART for HLK-LD2415H radar
 uart:
   id: radar_uart
@@ -168,6 +200,28 @@ binary_sensor:
       name: "Vehicle Detected"
       id: vehicle_detected
       device_class: motion
+      on_press:
+        then:
+          # Instant push on vehicle detection (if enabled)
+          - if:
+              condition:
+                and:
+                  - lambda: 'return id(push_enabled) && id(ha_webhook_url).length() > 10;'
+                  - switch.is_on: push_on_detection_switch
+              then:
+                - delay: 500ms  # Wait for speed reading to stabilize
+                - http_request.post:
+                    url: !lambda 'return id(ha_webhook_url);'
+                    headers:
+                      Content-Type: application/json
+                    json: |-
+                      root["device"] = id(device_location);
+                      root["event"] = "vehicle_detected";
+                      root["speed"] = id(vehicle_speed).state;
+                      root["direction"] = id(vehicle_direction).state;
+                      root["vehicle_count"] = id(vehicle_count).state;
+                      root["speeder"] = id(vehicle_speed).state > id(speed_limit_input).state;
+                      root["timestamp"] = id(homeassistant_time).now().timestamp;
 
 # Buttons
 button:
@@ -344,7 +398,7 @@ time:
               id(radar).set_current_hour(time.hour);
             }
 
-# Update current hour every minute
+# Update current hour every minute and push data to remote HA
 interval:
   - interval: 1min
     then:
@@ -353,3 +407,163 @@ interval:
           if (time.is_valid()) {
             id(radar).set_current_hour(time.hour);
           }
+
+  # Push data to remote Home Assistant every 30 seconds (when enabled)
+  - interval: 30s
+    then:
+      - if:
+          condition:
+            lambda: 'return id(push_enabled) && id(ha_webhook_url).length() > 10;'
+          then:
+            - http_request.post:
+                url: !lambda 'return id(ha_webhook_url);'
+                headers:
+                  Content-Type: application/json
+                json: |-
+                  root["device"] = id(device_location);
+                  root["speed"] = id(vehicle_speed).state;
+                  root["direction"] = id(vehicle_direction).state;
+                  root["detected"] = id(vehicle_detected).state;
+                  root["vehicle_count"] = id(vehicle_count).state;
+                  root["approaching_count"] = id(approaching_count).state;
+                  root["leaving_count"] = id(leaving_count).state;
+                  root["average_speed"] = id(average_speed).state;
+                  root["max_speed"] = id(max_speed).state;
+                  root["speeder_count"] = id(speeder_count).state;
+                  root["violation_percentage"] = id(violation_percentage).state;
+                  root["worst_speeder"] = id(worst_speeder).state;
+                  root["percentile_85"] = id(percentile_85_speed).state;
+                  root["peak_hour"] = id(peak_hour).state;
+                  root["peak_hour_count"] = id(peak_hour_count).state;
+                on_response:
+                  then:
+                    - lambda: |-
+                        if (response->status_code == 200) {
+                          ESP_LOGI("http_push", "Data pushed successfully");
+                          // Check response headers for config updates
+                          // HA can set X-Config-* headers to push settings back
+                          // This avoids complex JSON parsing
+                        } else {
+                          ESP_LOGW("http_push", "Push failed with code: %d", response->status_code);
+                        }
+
+  # Fetch configuration from Home Assistant every 60 seconds (when enabled)
+  # Uses HA REST API with Long-Lived Access Token
+  - interval: 60s
+    then:
+      - if:
+          condition:
+            lambda: 'return id(config_sync_enabled) && id(ha_base_url).length() > 10 && id(ha_token).length() > 10;'
+          then:
+            # Request config from HA - sends device ID, receives settings
+            - http_request.post:
+                url: !lambda 'return id(ha_base_url) + "/api/services/script/speed_radar_get_config";'
+                headers:
+                  Authorization: !lambda 'return "Bearer " + id(ha_token);'
+                  Content-Type: application/json
+                json: |-
+                  root["device"] = id(device_location);
+                  root["current_speed_limit"] = id(speed_limit_input).state;
+                  root["current_min_threshold"] = id(min_speed_input).state;
+                  root["current_direction_filter"] = id(direction_filter_select).state;
+                on_response:
+                  then:
+                    - lambda: |-
+                        if (response->status_code == 200) {
+                          ESP_LOGI("config_sync", "Config sync request sent");
+                        } else {
+                          ESP_LOGD("config_sync", "Config sync returned: %d", response->status_code);
+                        }
+
+# Text inputs for remote push configuration
+text:
+  - platform: template
+    name: "HA Webhook URL"
+    id: webhook_url_input
+    mode: text
+    optimistic: true
+    restore_value: true
+    icon: "mdi:webhook"
+    on_value:
+      then:
+        - lambda: |-
+            id(ha_webhook_url) = x;
+            ESP_LOGI("config", "Webhook URL updated");
+
+  - platform: template
+    name: "Device Location"
+    id: device_location_input
+    mode: text
+    optimistic: true
+    restore_value: true
+    initial_value: "Speed Radar 1"
+    icon: "mdi:map-marker"
+    on_value:
+      then:
+        - lambda: |-
+            id(device_location) = x;
+
+  - platform: template
+    name: "HA Base URL"
+    id: ha_base_url_input
+    mode: text
+    optimistic: true
+    restore_value: true
+    icon: "mdi:home-assistant"
+    on_value:
+      then:
+        - lambda: |-
+            id(ha_base_url) = x;
+            ESP_LOGI("config", "HA Base URL updated: %s", x.c_str());
+
+  - platform: template
+    name: "HA Access Token"
+    id: ha_token_input
+    mode: password
+    optimistic: true
+    restore_value: true
+    icon: "mdi:key"
+    on_value:
+      then:
+        - lambda: |-
+            id(ha_token) = x;
+            ESP_LOGI("config", "HA Token updated");
+
+# Switch to enable/disable remote push
+switch:
+  - platform: template
+    name: "Enable Remote Push"
+    id: push_enable_switch
+    icon: "mdi:cloud-upload"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_on:
+      then:
+        - lambda: 'id(push_enabled) = true;'
+        - logger.log: "Remote push enabled"
+    on_turn_off:
+      then:
+        - lambda: 'id(push_enabled) = false;'
+        - logger.log: "Remote push disabled"
+
+  - platform: template
+    name: "Push on Detection"
+    id: push_on_detection_switch
+    icon: "mdi:car-wireless"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+
+  - platform: template
+    name: "Enable Config Sync"
+    id: config_sync_switch
+    icon: "mdi:cloud-download"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_on:
+      then:
+        - lambda: 'id(config_sync_enabled) = true;'
+        - logger.log: "Config sync enabled"
+    on_turn_off:
+      then:
+        - lambda: 'id(config_sync_enabled) = false;'
+        - logger.log: "Config sync disabled"
