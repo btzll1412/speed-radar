@@ -398,12 +398,12 @@ This is the same architecture used by VoIP phones - always-connected, bidirectio
 
 ### Step 2: Install Speed Radar Hub Add-on
 
-1. Copy the `addon/` folder to your Home Assistant add-ons directory
-2. Go to **Settings → Add-ons → Add-on Store**
-3. Click the menu (⋮) → **Repositories**
-4. Add: `https://github.com/yourusername/speed-radar`
-5. Find "Speed Radar Hub" and click **Install**
-6. Configure the add-on with your Mosquitto credentials
+1. Go to **Settings → Add-ons → Add-on Store**
+2. Click the menu (⋮) → **Repositories**
+3. Add: `https://github.com/btzll1412/speed-radar`
+4. Click **Add** → Close
+5. Find "Speed Radar Hub" in the store and click **Install**
+6. Go to **Configuration** tab → Enter your Mosquitto credentials
 7. Start the add-on and open the Web UI
 
 ### Step 3: Configure the ESP32
@@ -704,7 +704,8 @@ The HLK-LD2415H outputs simple ASCII at 9600 baud:
 ```
 speed-radar/
 ├── README.md
-├── addon/                           # Speed Radar Hub HA Add-on
+├── repository.yaml                  # HA add-on repository config
+├── speed_radar_hub/                 # Speed Radar Hub HA Add-on
 │   ├── config.yaml                  # Add-on configuration
 │   ├── Dockerfile
 │   ├── run.sh
@@ -712,7 +713,7 @@ speed-radar/
 │   ├── app/
 │   │   ├── main.py                  # FastAPI application
 │   │   ├── database.py              # SQLite database
-│   │   └── mqtt.py                  # MQTT discovery
+│   │   └── mqtt.py                  # MQTT communication
 │   └── templates/                   # Web UI templates
 ├── docs/
 │   ├── WIRING.md                    # Detailed wiring guide

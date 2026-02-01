@@ -3,7 +3,7 @@ name: "Speed Radar Hub"
 description: "Central hub for managing multiple speed radar units across different networks"
 version: "1.0.0"
 slug: "speed_radar_hub"
-url: "https://github.com/yourusername/speed-radar"
+url: "https://github.com/btzll1412/speed-radar"
 arch:
   - aarch64
   - amd64
