@@ -36,6 +36,7 @@ options:
   mqtt_username: ""
   mqtt_password: ""
   external_url: ""
+  internal_url: ""
   data_retention_days: 30
   timezone: "UTC"
 
@@ -45,6 +46,7 @@ schema:
   mqtt_username: str?
   mqtt_password: password?
   external_url: url?
+  internal_url: url?
   data_retention_days: int(1,365)
   timezone: str
 

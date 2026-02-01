@@ -7,6 +7,7 @@ export MQTT_PORT=$(bashio::config 'mqtt_port')
 export MQTT_USERNAME=$(bashio::config 'mqtt_username')
 export MQTT_PASSWORD=$(bashio::config 'mqtt_password')
 export EXTERNAL_URL=$(bashio::config 'external_url')
+export INTERNAL_URL=$(bashio::config 'internal_url')
 export DATA_RETENTION_DAYS=$(bashio::config 'data_retention_days')
 export TIMEZONE=$(bashio::config 'timezone')
 
