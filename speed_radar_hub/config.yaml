@@ -45,8 +45,8 @@ schema:
   mqtt_port: port
   mqtt_username: str?
   mqtt_password: password?
-  external_url: url?
-  internal_url: url?
+  external_url: str?
+  internal_url: str?
   data_retention_days: int(1,365)
   timezone: str
 
