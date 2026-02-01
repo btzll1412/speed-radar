@@ -169,13 +169,20 @@ async def update_radar_config(
     min_threshold: int = Form(15),
     direction_filter: str = Form("both")
 ):
-    """Update radar configuration."""
+    """Update radar configuration - INSTANTLY pushed via MQTT!"""
     config = {
         "speed_limit": speed_limit,
         "min_threshold": min_threshold,
         "direction_filter": direction_filter
     }
+
+    # Save to database
     db.set_radar_config(radar_id, config)
+
+    # INSTANT push to radar via MQTT!
+    radar = db.get_radar_by_id(radar_id)
+    if mqtt_client and radar:
+        await mqtt_client.publish_config(radar, config)
 
     return RedirectResponse(
         url=get_url(f"/radar/{radar_id}?saved=1"),

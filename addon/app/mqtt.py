@@ -1,16 +1,19 @@
 """
 Speed Radar Hub - MQTT Module
-Handles MQTT discovery and state publishing for Home Assistant integration
+Handles bidirectional MQTT communication:
+- Subscribe to radar data topics (instant updates)
+- Publish config changes to radars (instant apply)
+- MQTT discovery for Home Assistant integration
 """
 
 import json
 import asyncio
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Callable
 import paho.mqtt.client as mqtt
 
 
 class MQTTClient:
-    """MQTT client for Home Assistant integration."""
+    """MQTT client for bidirectional radar communication."""
 
     def __init__(
         self,
@@ -25,6 +28,9 @@ class MQTTClient:
         self.password = password
         self.client: Optional[mqtt.Client] = None
         self.connected = False
+        self.on_radar_data: Optional[Callable] = None
+        self.on_radar_detection: Optional[Callable] = None
+        self.radars: Dict[str, Dict] = {}  # slug -> radar info
 
     async def connect(self):
         """Connect to MQTT broker."""
@@ -35,6 +41,7 @@ class MQTTClient:
 
         self.client.on_connect = self._on_connect
         self.client.on_disconnect = self._on_disconnect
+        self.client.on_message = self._on_message
 
         try:
             self.client.connect(self.host, self.port, 60)
@@ -58,6 +65,17 @@ class MQTTClient:
         if rc == 0:
             self.connected = True
             print("Connected to MQTT broker")
+
+            # Subscribe to all radar topics for instant updates
+            # speed_radar/+/speed - real-time speed readings
+            # speed_radar/+/detection - vehicle detection events
+            # speed_radar/+/stats - periodic statistics
+            # speed_radar/+/status - online/offline status
+            client.subscribe("speed_radar/+/speed")
+            client.subscribe("speed_radar/+/detection")
+            client.subscribe("speed_radar/+/stats")
+            client.subscribe("speed_radar/+/status")
+            print("Subscribed to speed_radar/+/# topics")
         else:
             print(f"MQTT connection failed with code: {rc}")
 
@@ -66,9 +84,118 @@ class MQTTClient:
         self.connected = False
         print("Disconnected from MQTT broker")
 
+    def _on_message(self, client, userdata, msg):
+        """Called when a message is received - INSTANT processing."""
+        try:
+            # Parse topic: speed_radar/{radar_name}/{type}
+            parts = msg.topic.split("/")
+            if len(parts) != 3 or parts[0] != "speed_radar":
+                return
+
+            radar_slug = parts[1]
+            msg_type = parts[2]
+
+            # Parse payload
+            if msg.payload:
+                try:
+                    data = json.loads(msg.payload.decode())
+                except:
+                    data = {"value": msg.payload.decode()}
+            else:
+                data = {}
+
+            # Handle different message types
+            if msg_type == "speed":
+                # Real-time speed reading
+                self._handle_speed_reading(radar_slug, data)
+            elif msg_type == "detection":
+                # Vehicle detection event
+                self._handle_detection(radar_slug, data)
+            elif msg_type == "stats":
+                # Periodic statistics
+                self._handle_stats(radar_slug, data)
+            elif msg_type == "status":
+                # Online/offline status
+                self._handle_status(radar_slug, data)
+
+        except Exception as e:
+            print(f"Error processing MQTT message: {e}")
+
+    def _handle_speed_reading(self, radar_slug: str, data: Dict):
+        """Handle real-time speed reading - forward to HA immediately."""
+        if radar_slug in self.radars:
+            radar = self.radars[radar_slug]
+            # Publish to HA topic immediately
+            state_topic = f"speed_radar/{radar_slug}/state"
+            self.client.publish(state_topic, json.dumps(data))
+            print(f"[{radar_slug}] Speed: {data.get('speed', 0):.1f} km/h")
+
+    def _handle_detection(self, radar_slug: str, data: Dict):
+        """Handle vehicle detection - forward to HA and trigger callbacks."""
+        if radar_slug in self.radars:
+            radar = self.radars[radar_slug]
+            # Publish to HA
+            state_topic = f"speed_radar/{radar_slug}/state"
+            data["detected"] = data.get("event") == "vehicle_detected"
+            self.client.publish(state_topic, json.dumps(data))
+
+            if data.get("event") == "vehicle_detected":
+                speed = data.get("speed", 0)
+                speeder = data.get("speeder", False)
+                print(f"[{radar_slug}] Detection: {speed:.1f} km/h {'SPEEDER!' if speeder else ''}")
+
+                # Callback for database recording
+                if self.on_radar_detection:
+                    asyncio.create_task(self.on_radar_detection(radar_slug, data))
+
+    def _handle_stats(self, radar_slug: str, data: Dict):
+        """Handle periodic statistics update."""
+        if radar_slug in self.radars:
+            # Publish full state to HA
+            state_topic = f"speed_radar/{radar_slug}/state"
+            self.client.publish(state_topic, json.dumps(data))
+
+            # Callback for database recording
+            if self.on_radar_data:
+                asyncio.create_task(self.on_radar_data(radar_slug, data))
+
+    def _handle_status(self, radar_slug: str, data: Dict):
+        """Handle online/offline status."""
+        status = data.get("value", "offline") if isinstance(data, dict) else str(data)
+        availability_topic = f"speed_radar/{radar_slug}/availability"
+        self.client.publish(availability_topic, status)
+        print(f"[{radar_slug}] Status: {status}")
+
     def _slugify(self, text: str) -> str:
         """Convert text to slug format."""
         return text.lower().replace(" ", "_").replace("-", "_")
+
+    def register_radar(self, radar: Dict[str, Any]):
+        """Register a radar for MQTT handling."""
+        slug = self._slugify(radar["name"])
+        self.radars[slug] = radar
+        print(f"Registered radar for MQTT: {slug}")
+
+    # ============================================================
+    # Config Publishing - INSTANT settings to radars
+    # ============================================================
+
+    async def publish_config(self, radar: Dict[str, Any], config: Dict[str, Any]):
+        """Publish configuration to a radar - INSTANT apply!"""
+        if not self.client or not self.connected:
+            return False
+
+        radar_slug = self._slugify(radar["name"])
+        config_topic = f"speed_radar/{radar_slug}/config"
+
+        # Publish config - radar will receive and apply immediately
+        self.client.publish(config_topic, json.dumps(config), retain=True)
+        print(f"Published config to {radar_slug}: {config}")
+        return True
+
+    # ============================================================
+    # HA Discovery
+    # ============================================================
 
     async def publish_discovery(self, radar: Dict[str, Any]):
         """Publish MQTT discovery messages for a radar."""
@@ -76,6 +203,8 @@ class MQTTClient:
             return
 
         radar_slug = self._slugify(radar["name"])
+        self.register_radar(radar)
+
         device_info = {
             "identifiers": [f"speed_radar_{radar['id']}"],
             "name": f"Speed Radar - {radar['name']}",
@@ -92,8 +221,7 @@ class MQTTClient:
                 "state_topic": f"speed_radar/{radar_slug}/state",
                 "value_template": "{{ value_json.speed | default(0) }}",
                 "unit_of_measurement": "km/h",
-                "icon": "mdi:speedometer",
-                "device_class": None
+                "icon": "mdi:speedometer"
             },
             {
                 "name": "Vehicle Count",
@@ -101,8 +229,7 @@ class MQTTClient:
                 "state_topic": f"speed_radar/{radar_slug}/state",
                 "value_template": "{{ value_json.vehicle_count | default(0) }}",
                 "unit_of_measurement": "vehicles",
-                "icon": "mdi:car-multiple",
-                "device_class": None
+                "icon": "mdi:car-multiple"
             },
             {
                 "name": "Average Speed",
@@ -110,8 +237,7 @@ class MQTTClient:
                 "state_topic": f"speed_radar/{radar_slug}/state",
                 "value_template": "{{ value_json.average_speed | default(0) | round(1) }}",
                 "unit_of_measurement": "km/h",
-                "icon": "mdi:speedometer-medium",
-                "device_class": None
+                "icon": "mdi:speedometer-medium"
             },
             {
                 "name": "Max Speed",
@@ -119,8 +245,7 @@ class MQTTClient:
                 "state_topic": f"speed_radar/{radar_slug}/state",
                 "value_template": "{{ value_json.max_speed | default(0) | round(1) }}",
                 "unit_of_measurement": "km/h",
-                "icon": "mdi:speedometer",
-                "device_class": None
+                "icon": "mdi:speedometer"
             },
             {
                 "name": "Speeder Count",
@@ -128,8 +253,7 @@ class MQTTClient:
                 "state_topic": f"speed_radar/{radar_slug}/state",
                 "value_template": "{{ value_json.speeder_count | default(0) }}",
                 "unit_of_measurement": "vehicles",
-                "icon": "mdi:car-emergency",
-                "device_class": None
+                "icon": "mdi:car-emergency"
             },
             {
                 "name": "Violation Percentage",
@@ -137,8 +261,7 @@ class MQTTClient:
                 "state_topic": f"speed_radar/{radar_slug}/state",
                 "value_template": "{{ value_json.violation_percentage | default(0) | round(1) }}",
                 "unit_of_measurement": "%",
-                "icon": "mdi:percent",
-                "device_class": None
+                "icon": "mdi:percent"
             },
             {
                 "name": "85th Percentile",
@@ -146,16 +269,14 @@ class MQTTClient:
                 "state_topic": f"speed_radar/{radar_slug}/state",
                 "value_template": "{{ value_json.percentile_85 | default(0) | round(1) }}",
                 "unit_of_measurement": "km/h",
-                "icon": "mdi:chart-bell-curve",
-                "device_class": None
+                "icon": "mdi:chart-bell-curve"
             },
             {
                 "name": "Direction",
                 "unique_id": f"speed_radar_{radar['id']}_direction",
                 "state_topic": f"speed_radar/{radar_slug}/state",
                 "value_template": "{{ value_json.direction | default('Unknown') }}",
-                "icon": "mdi:arrow-left-right",
-                "device_class": None
+                "icon": "mdi:arrow-left-right"
             }
         ]
 
@@ -172,8 +293,6 @@ class MQTTClient:
             }
             if sensor.get("unit_of_measurement"):
                 config_payload["unit_of_measurement"] = sensor["unit_of_measurement"]
-            if sensor.get("device_class"):
-                config_payload["device_class"] = sensor["device_class"]
 
             self.client.publish(config_topic, json.dumps(config_payload), retain=True)
 
@@ -218,6 +337,10 @@ class MQTTClient:
 
         radar_slug = self._slugify(radar["name"])
 
+        # Remove from registered radars
+        if radar_slug in self.radars:
+            del self.radars[radar_slug]
+
         # Remove all sensors
         sensor_names = ["speed", "vehicle_count", "average_speed", "max_speed",
                        "speeder_count", "violation_pct", "percentile_85", "direction"]
@@ -230,7 +353,7 @@ class MQTTClient:
         self.client.publish(f"homeassistant/binary_sensor/{radar_slug}_online/config", "", retain=True)
 
     async def publish_state(self, radar: Dict[str, Any], data: Dict[str, Any]):
-        """Publish state update for a radar."""
+        """Publish state update for a radar (legacy HTTP compatibility)."""
         if not self.client or not self.connected:
             return
 
