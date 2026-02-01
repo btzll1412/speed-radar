@@ -44,14 +44,41 @@
     <p style="color: var(--text-muted); margin: 10px 0;">
         Enter this URL in your ESP32's "Radar Hub URL" setting:
     </p>
+
+    {% if external_url %}
+    <!-- External URL (for Cloudflare Tunnel / remote access) -->
+    <div class="api-key-box" style="margin-bottom: 15px;">
+        <small style="color: var(--success);">🌐 External URL (for remote radars):</small>
+        <code id="api-url-external">{{ external_url }}{{ ingress_path }}/api/radar/{{ radar.api_key }}</code>
+    </div>
+    <div style="display: flex; gap: 10px; margin-bottom: 20px;">
+        <button onclick="copyApiUrl('external')" class="btn btn-primary btn-sm">
+            Copy External URL
+        </button>
+    </div>
+
+    <!-- Internal URL -->
     <div class="api-key-box">
-        <small style="color: var(--text-muted);">API URL (keep this secret!):</small>
-        <code id="api-url">{{ request.url.scheme }}://{{ request.url.netloc }}{{ ingress_path }}/api/radar/{{ radar.api_key }}</code>
+        <small style="color: var(--text-muted);">🏠 Internal URL (for local radars):</small>
+        <code id="api-url-internal">{{ request.url.scheme }}://{{ request.url.netloc }}{{ ingress_path }}/api/radar/{{ radar.api_key }}</code>
     </div>
     <div style="display: flex; gap: 10px; margin-top: 10px;">
-        <button onclick="copyApiUrl()" class="btn btn-secondary btn-sm">
+        <button onclick="copyApiUrl('internal')" class="btn btn-secondary btn-sm">
+            Copy Internal URL
+        </button>
+    {% else %}
+    <div class="api-key-box">
+        <small style="color: var(--text-muted);">API URL (keep this secret!):</small>
+        <code id="api-url-internal">{{ request.url.scheme }}://{{ request.url.netloc }}{{ ingress_path }}/api/radar/{{ radar.api_key }}</code>
+    </div>
+    <p style="color: var(--warning); font-size: 12px; margin-top: 10px;">
+        💡 Tip: Set "external_url" in add-on config for Cloudflare Tunnel access
+    </p>
+    <div style="display: flex; gap: 10px; margin-top: 10px;">
+        <button onclick="copyApiUrl('internal')" class="btn btn-secondary btn-sm">
             Copy URL
         </button>
+    {% endif %}
         <form method="POST" action="{{ ingress_path }}/radar/{{ radar.id }}/regenerate-key" style="display: inline;">
             <button type="submit" class="btn btn-secondary btn-sm"
                     onclick="return confirm('Regenerate API key? The radar will need to be reconfigured.')">
@@ -185,8 +212,9 @@
 </div>
 
 <script>
-function copyApiUrl() {
-    const url = document.getElementById('api-url').textContent;
+function copyApiUrl(type) {
+    const elementId = type === 'external' ? 'api-url-external' : 'api-url-internal';
+    const url = document.getElementById(elementId).textContent;
     navigator.clipboard.writeText(url).then(() => {
         alert('API URL copied to clipboard!');
     });

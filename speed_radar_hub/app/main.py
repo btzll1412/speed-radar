@@ -20,6 +20,7 @@ from .mqtt import MQTTClient
 
 # Configuration from environment
 INGRESS_PATH = os.environ.get("INGRESS_PATH", "")
+EXTERNAL_URL = os.environ.get("EXTERNAL_URL", "")  # e.g., https://smart.rosenberg21.com
 MQTT_HOST = os.environ.get("MQTT_HOST", "core-mosquitto")
 MQTT_PORT = int(os.environ.get("MQTT_PORT", 1883))
 MQTT_USERNAME = os.environ.get("MQTT_USERNAME", "")
@@ -128,7 +129,8 @@ async def radar_detail(request: Request, radar_id: int):
     return templates.TemplateResponse("radar_detail.html", {
         "request": request,
         "radar": radar,
-        "ingress_path": INGRESS_PATH
+        "ingress_path": INGRESS_PATH,
+        "external_url": EXTERNAL_URL
     })
 
 
